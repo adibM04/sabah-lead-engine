@@ -5,7 +5,7 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "sabah-leads"
-database_id = "REPLACE_WITH_DATABASE_ID"
+database_id = "d2cea51c-6b1b-4996-8576-18cd1c0218d4"
 migrations_dir = "migrations"
 
 # Set these as Pages environment variables (Settings > Variables), not here:
