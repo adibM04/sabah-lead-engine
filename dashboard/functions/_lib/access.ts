@@ -6,6 +6,7 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string; // e.g. yourteam.cloudflareaccess.com
   ACCESS_AUD?: string; // Access application AUD tag
   DEV_BYPASS?: string; // "1" for local wrangler dev only
+  DASH_PASSWORD?: string; // shared password, checked via HTTP Basic auth (any username)
 }
 
 interface CertKey extends JsonWebKey {
@@ -34,8 +35,29 @@ async function getKeys(team: string): Promise<CertKey[]> {
   return body.keys;
 }
 
+async function sha256(s: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
+}
+
+async function passwordOk(request: Request, env: Env): Promise<boolean> {
+  const expected = env.DASH_PASSWORD;
+  const header = request.headers.get("Authorization");
+  if (!expected || !header || !header.startsWith("Basic ")) return false;
+  try {
+    const decoded = atob(header.slice(6));
+    const given = decoded.slice(decoded.indexOf(":") + 1);
+    const [a, b] = await Promise.all([sha256(given), sha256(expected)]);
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+    return diff === 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function isAuthorized(request: Request, env: Env): Promise<boolean> {
   if (env.DEV_BYPASS === "1") return true;
+  if (await passwordOk(request, env)) return true;
 
   const team = env.ACCESS_TEAM_DOMAIN;
   const aud = env.ACCESS_AUD;
