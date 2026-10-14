@@ -1,4 +1,4 @@
-import type { Digest, Lead, PlaybookState, SearchQuery, SettingsState } from "./types";
+import type { Digest, Lead, LeadChanges, PlaybookState, ReplyAnalysis, ScansState, SearchQuery, SettingsState, Stats } from "./types";
 
 async function check(res: Response): Promise<Response> {
   if (res.ok) return res;
@@ -17,7 +17,7 @@ export async function fetchLeads(): Promise<Lead[]> {
   return (await res.json()) as Lead[];
 }
 
-export async function updateLead(id: string, changes: Partial<Lead>): Promise<void> {
+export async function updateLead(id: string, changes: LeadChanges): Promise<void> {
   await check(
     await fetch(`/api/leads/${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -86,4 +86,24 @@ export async function streamChat(
     if (done) break;
     onText(decoder.decode(value, { stream: true }));
   }
+}
+
+export async function fetchScans(): Promise<ScansState> {
+  return (await (await check(await fetch("/api/scans", { cache: "no-store" }))).json()) as ScansState;
+}
+export const requestScan = (query: string, maxResults: number) => send("/api/scans", "POST", { query, max_results: maxResults });
+
+export async function fetchStats(): Promise<Stats> {
+  return (await (await check(await fetch("/api/stats", { cache: "no-store" }))).json()) as Stats;
+}
+
+export async function analyseReply(leadId: string, reply: string): Promise<ReplyAnalysis> {
+  const res = await check(
+    await fetch("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lead_id: leadId, reply }),
+    }),
+  );
+  return (await res.json()) as ReplyAnalysis;
 }

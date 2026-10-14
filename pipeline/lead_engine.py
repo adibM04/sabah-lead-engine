@@ -11,6 +11,7 @@ Usage:
     python lead_engine.py --dry-run             # no database writes
     python lead_engine.py --backfill --max 40   # draft for leads that have none yet
     python lead_engine.py --redraft --max 10    # regenerate drafts you queued, or stale unedited ones
+    python lead_engine.py --scan-requests       # run scans requested from the dashboard
 """
 from __future__ import annotations
 
@@ -85,7 +86,7 @@ def clean_emails(raw: list[str]) -> list[str]:
     return list(seen)
 
 
-def audit(url: str | None) -> dict:
+def audit(url: str | None, preview_chars: int = 2500) -> dict:
     result = {"emails": [], "whatsapp": False, "linktree": False, "preview": "No website available."}
     if not url:
         return result
@@ -105,7 +106,7 @@ def audit(url: str | None) -> dict:
     try:
         r = requests.get(f"https://r.jina.ai/{url}", headers=UA, timeout=15)
         if r.status_code == 200:
-            result["preview"] = r.text[:2500]
+            result["preview"] = r.text[:preview_chars]
     except Exception:  # noqa: BLE001
         pass
     return result
@@ -154,6 +155,56 @@ Write the outreach for this business, following the playbook exactly.
 # -------------------------------------------------------------- pipeline
 def existing_place_ids() -> set[str]:
     return {r["place_id"] for r in d1("SELECT place_id FROM leads")}
+
+
+SOCIAL_HOSTS = ("facebook.com", "instagram.com", "linktr.ee", "carrd.co", "beacons.ai")
+
+
+def score_lead(lead: dict) -> int:
+    """0 to 85. Mirrors the SQL in migration 0005 and dashboard/src/score.ts."""
+    site = (lead.get("website") or "").lower()
+    if not site:
+        web = 40
+    elif lead.get("uses_linktree") or any(h in site for h in SOCIAL_HOSTS):
+        web = 30
+    else:
+        web = 10
+    reviews = min(int(lead.get("reviews_count") or 0), 500) * 20 // 500
+    rating = float(lead.get("rating") or 0)
+    stars = 10 if rating >= 4.5 else 5 if rating >= 4.0 else 0
+    contact = 15 if lead.get("email") else 5 if lead.get("phone") else 0
+    return web + reviews + stars + contact
+
+
+NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+
+
+def run_start(queries: list[str], source: str) -> int:
+    d1(
+        f"INSERT INTO scan_runs (source, phase, queries, heartbeat_at) VALUES (?, 'scraping', ?, {NOW})",
+        [source, json.dumps(queries)],
+    )
+    return d1("SELECT MAX(id) id FROM scan_runs")[0]["id"]
+
+
+def run_update(run_id: int, **fields) -> None:
+    sets = ", ".join(f"{k} = ?" for k in fields) + f", heartbeat_at = {NOW}"
+    d1(f"UPDATE scan_runs SET {sets} WHERE id = ?", list(fields.values()) + [run_id])
+
+
+def run_finish(run_id: int, status: str, error: str | None = None) -> None:
+    d1(
+        f"UPDATE scan_runs SET status = ?, phase = 'finished', error = ?, finished_at = {NOW}, heartbeat_at = {NOW} WHERE id = ?",
+        [status, error, run_id],
+    )
+
+
+def reset_stale() -> None:
+    """Runs and requests that stopped reporting (crash, reboot) are marked failed so the dashboard is honest."""
+    d1("UPDATE scan_runs SET status = 'failed', phase = 'finished', error = 'Interrupted', "
+       f"finished_at = {NOW} WHERE status = 'running' AND heartbeat_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 minutes')")
+    d1("UPDATE scan_requests SET status = 'failed', error = 'Interrupted' WHERE status = 'running' "
+       "AND requested_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-60 minutes')")
 
 
 def load_playbook(dry_run: bool) -> tuple[str, int | None]:
@@ -236,47 +287,82 @@ def to_lead(place: dict, query_hint: str | None) -> dict:
     }
 
 
-def run(queries: list[str], max_results: int, dry_run: bool) -> None:
+def run(queries: list[str], max_results: int, dry_run: bool, source: str = "scheduled") -> int | None:
     playbook, version = load_playbook(dry_run)
     known = set() if dry_run else existing_place_ids()
-    places = scrape(queries, max_results)
+    run_id = None if dry_run else run_start(queries, source)
     saved = skipped = failed = 0
 
-    for i, place in enumerate(places, 1):
-        lead = to_lead(place, queries[0] if len(queries) == 1 else None)
-        if not lead["place_id"]:
-            continue
-        if lead["place_id"] in known:
-            skipped += 1
-            continue
-        known.add(lead["place_id"])
+    try:
+        places = scrape(queries, max_results)
 
-        print(f"[{i}/{len(places)}] {lead['business_name']} ({lead['website'] or 'no website'})")
-        a = audit(lead["website"])
-        emails = clean_emails(list(place.get("emails") or []) + a["emails"])
-        lead.update(
-            email=emails[0] if emails else None,
-            all_emails=emails,
-            has_whatsapp_link=a["whatsapp"],
-            uses_linktree=a["linktree"],
-        )
+        fresh = []
+        for place in places:
+            lead = to_lead(place, queries[0] if len(queries) == 1 else None)
+            if not lead["place_id"]:
+                continue
+            if lead["place_id"] in known:
+                skipped += 1
+                continue
+            known.add(lead["place_id"])
+            fresh.append((place, lead))
+        if run_id:
+            run_update(run_id, found=len(places), to_process=len(fresh), skipped=skipped, phase="drafting")
 
+        for i, (place, lead) in enumerate(fresh, 1):
+            print(f"[{i}/{len(fresh)}] {lead['business_name']} ({lead['website'] or 'no website'})")
+            a = audit(lead["website"])
+            emails = clean_emails(list(place.get("emails") or []) + a["emails"])
+            lead.update(
+                email=emails[0] if emails else None,
+                all_emails=emails,
+                has_whatsapp_link=a["whatsapp"],
+                uses_linktree=a["linktree"],
+            )
+            lead["score"] = score_lead(lead)
+
+            try:
+                out, flags = draft(lead, a, playbook)
+            except Exception as e:  # noqa: BLE001
+                print(f"   [draft] failed: {e}")
+                failed += 1
+                if run_id:
+                    run_update(run_id, processed=i, failed=failed)
+                continue
+            apply_draft(lead, out, flags, version)
+
+            if dry_run:
+                print(json.dumps(lead, indent=2, ensure_ascii=False))
+            else:
+                save_lead(lead)
+            saved += 1
+            if run_id:
+                run_update(run_id, processed=i, new_leads=saved, failed=failed)
+            time.sleep(1)
+
+        print(f"\n[done] saved {saved}, already known {skipped}, draft failures {failed}")
+        if run_id:
+            run_finish(run_id, "done")
+    except Exception as e:  # noqa: BLE001
+        if run_id:
+            run_finish(run_id, "failed", str(e)[:500])
+        raise
+    return run_id
+
+
+def process_scan_requests(limit: int = 3) -> None:
+    """Run scans requested from the dashboard. Safe to call every couple of minutes."""
+    reset_stale()
+    rows = d1("SELECT * FROM scan_requests WHERE status = 'pending' ORDER BY id LIMIT ?", [limit])
+    for req in rows:
+        d1("UPDATE scan_requests SET status = 'running' WHERE id = ? AND status = 'pending'", [req["id"]])
+        print(f"[scan request {req['id']}] {req['query']} (max {req['max_results']})")
         try:
-            out, flags = draft(lead, a, playbook)
+            run_id = run([req["query"]], int(req["max_results"]), False, source="manual")
+            d1("UPDATE scan_requests SET status = 'done', run_id = ? WHERE id = ?", [run_id, req["id"]])
         except Exception as e:  # noqa: BLE001
-            print(f"   [draft] failed: {e}")
-            failed += 1
-            continue
-        apply_draft(lead, out, flags, version)
-
-        if dry_run:
-            print(json.dumps(lead, indent=2, ensure_ascii=False))
-        else:
-            save_lead(lead)
-        saved += 1
-        time.sleep(1)
-
-    print(f"\n[done] saved {saved}, already known {skipped}, draft failures {failed}")
+            print(f"   [scan] failed: {e}")
+            d1("UPDATE scan_requests SET status = 'failed', error = ? WHERE id = ?", [str(e)[:300], req["id"]])
 
 
 def backfill(limit: int) -> None:
@@ -336,7 +422,12 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true", help="print leads, do not touch the database")
     p.add_argument("--backfill", action="store_true", help="draft for existing leads that have no draft; skips scraping")
     p.add_argument("--redraft", action="store_true", help="regenerate queued or stale drafts; skips scraping")
+    p.add_argument("--scan-requests", action="store_true", help="run scans requested from the dashboard")
     args = p.parse_args()
+
+    if args.scan_requests:
+        process_scan_requests()
+        return
 
     if args.redraft:
         redraft(args.max)

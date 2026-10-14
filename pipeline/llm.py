@@ -27,6 +27,27 @@ def _extract_json(text: str) -> str:
     return text[start : end + 1] if start != -1 and end > start else text
 
 
+def _client_or_create():
+    global _client
+    if _client is None:
+        _client = OpenAI(
+            api_key=secret("deepseek_key", "DEEPSEEK_API_KEY"),
+            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            timeout=300,
+        )
+    return _client
+
+
+def chat_text(system: str, user: str, max_tokens: int = 8000) -> str:
+    """Plain completion (no JSON mode), for long outputs such as a whole HTML page."""
+    resp = _client_or_create().chat.completions.create(
+        model=MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+    )
+    return resp.choices[0].message.content or ""
+
+
 def chat_json(system: str, user: str, schema: type[T], retries: int = 2) -> T:
     """Ask for a JSON object, validate it against `schema`, retry with the error on failure."""
     global _json_mode, _client

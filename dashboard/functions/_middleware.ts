@@ -1,4 +1,5 @@
 import { isAuthorized, type Env } from "./_lib/access";
+import { ensureMigrated } from "./_lib/migrate";
 
 // Gate the whole site (pages and API) behind the shared password.
 // The browser shows its own login box; use any username.
@@ -17,6 +18,14 @@ export const onRequest: PagesFunction<Env> = async (ctx) => {
     const origin = ctx.request.headers.get("Origin");
     if (origin !== new URL(ctx.request.url).origin) {
       return Response.json({ error: "Cross-site request blocked" }, { status: 403 });
+    }
+  }
+
+  if (new URL(ctx.request.url).pathname.startsWith("/api/")) {
+    try {
+      await ensureMigrated(ctx.env);
+    } catch (e) {
+      return Response.json({ error: `Database update failed. ${(e as Error).message}` }, { status: 503 });
     }
   }
   return ctx.next();

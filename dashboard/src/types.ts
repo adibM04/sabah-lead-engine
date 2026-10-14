@@ -42,6 +42,10 @@ export interface Lead {
   followup_draft: string | null;
   followup_channel: string | null;
   redraft: boolean | number | null;
+  score: number | null;
+  mockup_status: "requested" | "ready" | "failed" | null;
+  mockup_at: string | null;
+  has_mockup: boolean;
   status: LeadStatus;
   notes: string | null;
   sent_at: string | null;
@@ -121,3 +125,61 @@ export const OUTCOME_REASONS = [
   "Wrong contact",
   "Other",
 ];
+
+export interface ScanRun {
+  id: number;
+  source: "scheduled" | "manual";
+  status: "running" | "done" | "failed";
+  phase: string | null;
+  queries: string[];
+  started_at: string;
+  finished_at: string | null;
+  heartbeat_at: string | null;
+  found: number;
+  to_process: number;
+  processed: number;
+  new_leads: number;
+  skipped: number;
+  failed: number;
+  error: string | null;
+}
+
+export interface ScanRequest {
+  id: number;
+  query: string;
+  max_results: number;
+  status: "pending" | "running" | "done" | "failed";
+  requested_at: string;
+  run_id: number | null;
+  error: string | null;
+}
+
+export interface ScansState {
+  runs: ScanRun[];
+  requests: ScanRequest[];
+}
+
+export interface FunnelRow {
+  label: string | number;
+  leads: number;
+  contacted: number;
+  replied: number;
+  won: number;
+}
+
+export interface Stats {
+  total: Omit<FunnelRow, "label">;
+  by_category: FunnelRow[];
+  by_pitch: FunnelRow[];
+  by_playbook: FunnelRow[];
+}
+
+export interface ReplyAnalysis {
+  sentiment: "positive" | "neutral" | "negative" | "unclear";
+  suggested_status: "replied" | "follow_up" | "won" | "lost";
+  outcome_reason: string | null;
+  summary: string;
+  suggested_reply: string | null;
+}
+
+export type LeadChanges = Partial<Lead> & { mockup?: "request" };

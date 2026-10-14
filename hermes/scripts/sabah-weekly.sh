@@ -8,4 +8,5 @@ flock -n 9 || exit 0   # another run is active; stay quiet
 PY="$DIR/.venv/bin/python"
 "$PY" lead_engine.py --max 15 >> run.log 2>&1
 "$PY" weekly.py --only review >> run.log 2>&1
+"$PY" mockups.py --auto-max 3 >> run.log 2>&1
 "$PY" summary.py weekly

@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
-import { OUTCOME_REASONS, STATUS_LABEL, type Lead, type LeadStatus } from "../types";
-import { AlertIcon, BackIcon, ChatIcon, CopyIcon, MailIcon, RefreshIcon, SendIcon } from "./icons";
+import { analyseReply } from "../api";
+import { leadScore, scoreSummary } from "../score";
+import { OUTCOME_REASONS, STATUS_LABEL, type Lead, type LeadChanges, type LeadStatus, type ReplyAnalysis } from "../types";
+import { AlertIcon, BackIcon, ChatIcon, CopyIcon, MailIcon, RefreshIcon, SendIcon, SparkIcon } from "./icons";
 import StatusChip from "./StatusChip";
+import { PITCH_LABEL } from "./pitch";
 
 interface Props {
   lead: Lead;
-  onPatch: (id: string, changes: Partial<Lead>) => void;
+  onPatch: (id: string, changes: LeadChanges) => void;
   onBack: () => void;
   notify: (message: string) => void;
 }
 
-type Tab = "email" | "whatsapp" | "followup";
+type Tab = "email" | "whatsapp" | "followup" | "mockup";
 
 const STATUS_OPTIONS = Object.keys(STATUS_LABEL) as LeadStatus[];
 
@@ -24,12 +27,6 @@ function words(t: string): number {
   return t.trim() ? t.trim().split(/\s+/).length : 0;
 }
 
-const PITCH_LABEL: Record<string, string> = {
-  website: "Website",
-  internal_system: "Internal system",
-  ui_fix: "UI fix",
-  mixed: "Website and system",
-};
 
 function parseFlags(raw: string | null): string[] {
   try {
@@ -46,6 +43,9 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
   const [body, setBody] = useState(lead.draft_edited ?? emailOriginal);
   const [wa, setWa] = useState(lead.whatsapp_edited ?? waOriginal);
   const [notes, setNotes] = useState(lead.notes ?? "");
+  const [reply, setReply] = useState("");
+  const [analysis, setAnalysis] = useState<ReplyAnalysis | null>(null);
+  const [reading, setReading] = useState(false);
   const [tab, setTab] = useState<Tab>(lead.email_draft || !lead.whatsapp_draft ? "email" : "whatsapp");
 
   // Pick up changes made elsewhere (for example "Use as email" in the chat panel).
@@ -92,6 +92,36 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
     notify("Follow-up recorded. No more reminders for this lead");
   }
 
+  async function readReply() {
+    setReading(true);
+    setAnalysis(null);
+    try {
+      setAnalysis(await analyseReply(lead.id, reply));
+    } catch (e) {
+      notify((e as Error).message);
+    } finally {
+      setReading(false);
+    }
+  }
+
+  function applyAnalysis(a: ReplyAnalysis) {
+    const day = new Date().toLocaleDateString("en-MY", { day: "numeric", month: "short" });
+    const nextNotes = `${notes.trim() ? `${notes.trim()}\n\n` : ""}Reply ${day}: ${reply.trim()}`;
+    setNotes(nextNotes);
+    onPatch(lead.id, {
+      status: a.suggested_status,
+      notes: nextNotes,
+      outcome_reason: a.suggested_status === "lost" ? a.outcome_reason : lead.outcome_reason,
+      follow_up_at: a.suggested_status === "follow_up" ? inDays(5) : lead.follow_up_at,
+    });
+    setReply("");
+    setAnalysis(null);
+    notify(`Moved to ${STATUS_LABEL[a.suggested_status]} and saved their reply in the notes`);
+  }
+
+  const canMockup = Boolean(lead.website);
+  const mockupWaiting = lead.mockup_status === "requested";
+
   const mailto = lead.email
     ? `mailto:${lead.email}?subject=${encodeURIComponent(lead.email_subject ?? "")}&body=${encodeURIComponent(body)}`
     : null;
@@ -117,6 +147,12 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
           </div>
           <StatusChip status={lead.status} />
         </header>
+        <p className="score-line">
+          <span className="score score-lg" aria-label={`Score ${leadScore(lead)} of 85`}>
+            {leadScore(lead)}
+          </span>
+          <span className="muted">of 85. {scoreSummary(lead)}</span>
+        </p>
 
         <dl className="facts">
           <div className="fact">
@@ -194,6 +230,11 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
                 <RefreshIcon size={16} /> Follow-up
               </button>
             )}
+            {canMockup && (
+              <button role="tab" aria-selected={tab === "mockup"} className={`paper-tab${tab === "mockup" ? " is-active" : ""}`} onClick={() => setTab("mockup")}>
+                <SparkIcon size={16} /> Mock-up {lead.has_mockup && lead.mockup_status === "ready" && <span className="dot" title="Ready" />}
+              </button>
+            )}
             <span className="paper-spacer" />
             {lead.status === "new" && (
               <button className="btn btn-quiet btn-small" onClick={() => onPatch(lead.id, { status: "approved" })}>
@@ -210,7 +251,7 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
               disabled={Boolean(lead.redraft)}
               title="Writes new drafts within about 30 minutes and replaces your edits"
               onClick={() => {
-                onPatch(lead.id, { redraft: true } as Partial<Lead>);
+                onPatch(lead.id, { redraft: true });
                 notify("Queued. New drafts appear within about 30 minutes and replace your edits.");
               }}
             >
@@ -308,7 +349,89 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
               <p className="pad-text">{lead.followup_draft}</p>
             </div>
           )}
+
+          {tab === "mockup" && canMockup && (
+            <div role="tabpanel" className="mockup-panel">
+              {lead.has_mockup && lead.mockup_status !== "requested" ? (
+                <>
+                  <p className="paper-row muted">
+                    A rough concept built from their current website, to show in person or attach. Anything not on their site is a placeholder.
+                  </p>
+                  <iframe
+                    key={lead.mockup_at ?? "m"}
+                    className="mockup-frame"
+                    title={`Concept mock-up for ${lead.business_name}`}
+                    src={`/api/mockup/${encodeURIComponent(lead.id)}`}
+                    sandbox=""
+                  />
+                </>
+              ) : mockupWaiting ? (
+                <p className="paper-empty">Queued. The mock-up appears within about 30 minutes. This page checks again when you reopen the lead.</p>
+              ) : lead.mockup_status === "failed" ? (
+                <p className="paper-empty">The last attempt failed, usually because the site could not be read. You can try again.</p>
+              ) : (
+                <p className="paper-empty">
+                  No mock-up yet. DeepSeek can build a one-page concept from their current website. It takes a few minutes and uses a little API credit.
+                </p>
+              )}
+            </div>
+          )}
         </section>
+
+        {["sent", "whatsapp", "follow_up", "replied"].includes(lead.status) && (
+          <section className="reply-box" aria-label="They replied">
+            <h3>They replied?</h3>
+            <p className="muted">Paste what they said. DeepSeek reads it and suggests the next step. Nothing changes until you click.</p>
+            <label className="sr-only" htmlFor="reply-text">
+              Their reply
+            </label>
+            <textarea id="reply-text" rows={4} value={reply} maxLength={4000} onChange={(e) => setReply(e.target.value)} placeholder="Paste their email or WhatsApp reply" />
+            <div className="actions">
+              <button className="btn btn-primary" disabled={reading || reply.trim().length < 2} onClick={readReply}>
+                {reading ? "Reading" : "Read their reply"}
+              </button>
+            </div>
+            {analysis && (
+              <div className="analysis" aria-live="polite">
+                <p>
+                  <span className={`chip tone-${analysis.sentiment}`}>{analysis.sentiment}</span> {analysis.summary}
+                </p>
+                <p className="muted">
+                  Suggested: move to <strong>{STATUS_LABEL[analysis.suggested_status]}</strong>
+                  {analysis.outcome_reason ? ` (${analysis.outcome_reason})` : ""}.
+                </p>
+                {analysis.suggested_reply && (
+                  <>
+                    <label className="sr-only" htmlFor="reply-suggest">
+                      Suggested reply
+                    </label>
+                    <textarea
+                      id="reply-suggest"
+                      className="letter is-short"
+                      value={analysis.suggested_reply}
+                      onChange={(e) => setAnalysis({ ...analysis, suggested_reply: e.target.value })}
+                    />
+                  </>
+                )}
+                <div className="actions">
+                  <button className="btn btn-primary" onClick={() => applyAnalysis(analysis)}>
+                    Move to {STATUS_LABEL[analysis.suggested_status]} and save reply
+                  </button>
+                  {analysis.suggested_reply && (
+                    <button className="btn" onClick={() => copy(analysis.suggested_reply!, "Reply")}>
+                      <CopyIcon size={16} /> Copy suggested reply
+                    </button>
+                  )}
+                  {analysis.suggested_reply && waHref(analysis.suggested_reply) && (
+                    <a className="btn" href={waHref(analysis.suggested_reply)!} target="_blank" rel="noreferrer">
+                      <ChatIcon size={16} /> Open in WhatsApp
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         <section className="tracking" aria-label="Tracking">
           <label>
@@ -380,6 +503,30 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
               )}
               <button className="btn" onClick={() => markSent("whatsapp")} disabled={lead.status === "whatsapp"}>
                 <SendIcon size={16} /> Mark WhatsApp sent
+              </button>
+            </>
+          )}
+          {tab === "mockup" && (
+            <>
+              {lead.has_mockup && lead.mockup_status !== "requested" && (
+                <>
+                  <a className="btn btn-primary" href={`/api/mockup/${encodeURIComponent(lead.id)}?download=1`}>
+                    <CopyIcon size={16} /> Download HTML
+                  </a>
+                  <a className="btn" href={`/api/mockup/${encodeURIComponent(lead.id)}`} target="_blank" rel="noreferrer">
+                    Open full page
+                  </a>
+                </>
+              )}
+              <button
+                className={lead.has_mockup ? "btn" : "btn btn-primary"}
+                disabled={mockupWaiting}
+                onClick={() => {
+                  onPatch(lead.id, { mockup: "request", mockup_status: "requested" });
+                  notify("Queued. The mock-up appears within about 30 minutes.");
+                }}
+              >
+                <RefreshIcon size={16} /> {mockupWaiting ? "Queued" : lead.has_mockup ? "Rebuild mock-up" : "Build a mock-up"}
               </button>
             </>
           )}

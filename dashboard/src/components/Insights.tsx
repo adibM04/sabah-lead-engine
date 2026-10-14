@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { decidePlaybook, fetchDigest, fetchPlaybook, fetchQueries, setQueryStatus } from "../api";
-import type { Digest, PlaybookState, SearchQuery } from "../types";
+import { decidePlaybook, fetchDigest, fetchPlaybook, fetchQueries, fetchStats, setQueryStatus } from "../api";
+import type { Digest, FunnelRow, PlaybookState, SearchQuery, Stats } from "../types";
+import { PITCH_LABEL } from "./pitch";
 
 type Op = { kind: "same" | "add" | "del"; text: string };
 
@@ -29,6 +30,76 @@ function when(iso: string): string {
   return new Date(iso).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric" });
 }
 
+
+function pct(n: number, of: number): string {
+  return of > 0 ? `${Math.round((n / of) * 100)}%` : "0%";
+}
+
+function Funnel({ stats }: { stats: Stats }) {
+  const t = stats.total;
+  const steps = [
+    { label: "Leads found", n: t.leads, of: t.leads },
+    { label: "Contacted", n: t.contacted, of: t.leads },
+    { label: "Replied", n: t.replied, of: t.contacted },
+    { label: "Won", n: t.won, of: t.replied },
+  ];
+  return (
+    <>
+      <ol className="funnel" aria-label="Lead funnel">
+        {steps.map((st, i) => (
+          <li key={st.label}>
+            <span className="funnel-label">{st.label}</span>
+            <span className="funnel-track">
+              <span className="funnel-fill" style={{ width: `${t.leads ? Math.max(st.n ? 2 : 0, (st.n / t.leads) * 100) : 0}%` }} />
+            </span>
+            <span className="funnel-n">
+              {st.n}
+              {i > 0 && <small> {pct(st.n, st.of)} of {steps[i - 1].label.toLowerCase()}</small>}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {t.contacted < 10 && (
+        <p className="muted">Small numbers so far. Treat the percentages as a rough guide until about 30 leads are contacted.</p>
+      )}
+    </>
+  );
+}
+
+function Breakdown({ title, rows, map }: { title: string; rows: FunnelRow[]; map?: (l: string) => string }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="table-wrap">
+      <table className="runs breakdown">
+        <caption className="sr-only">{title}</caption>
+        <thead>
+          <tr>
+            <th scope="col">{title}</th>
+            <th scope="col" className="num">Leads</th>
+            <th scope="col" className="num">Contacted</th>
+            <th scope="col" className="num">Replied</th>
+            <th scope="col" className="num">Won</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={String(r.label)}>
+              <td>{map ? map(String(r.label)) : String(r.label)}</td>
+              <td className="num">{r.leads}</td>
+              <td className="num">{r.contacted}</td>
+              <td className="num">
+                {r.replied}
+                {r.contacted > 0 && <small className="muted"> {pct(r.replied, r.contacted)}</small>}
+              </td>
+              <td className="num">{r.won}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 interface Props {
   notify: (m: string) => void;
   onChanged: () => void;
@@ -38,9 +109,11 @@ export default function Insights({ notify, onChanged }: Props) {
   const [digest, setDigest] = useState<Digest | null>(null);
   const [pb, setPb] = useState<PlaybookState | null>(null);
   const [queries, setQueries] = useState<SearchQuery[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
+    fetchStats().then(setStats).catch(() => setStats(null));
     Promise.all([fetchDigest(), fetchPlaybook(), fetchQueries()])
       .then(([d, p, q]) => {
         setDigest(d);
@@ -80,6 +153,20 @@ export default function Insights({ notify, onChanged }: Props) {
 
   return (
     <div className="insights">
+      {stats && (
+        <section className="card">
+          <h2>Funnel</h2>
+          <Funnel stats={stats} />
+          {stats.total.contacted > 0 && (
+            <>
+              <Breakdown title="Category" rows={stats.by_category} />
+              <Breakdown title="Pitch" rows={stats.by_pitch} map={(l) => PITCH_LABEL[l] ?? l} />
+              {stats.by_playbook.length > 1 && <Breakdown title="Playbook version" rows={stats.by_playbook} map={(l) => `Version ${l}`} />}
+            </>
+          )}
+        </section>
+      )}
+
       <section className="card">
         <h2>Last weekly review</h2>
         {digest ? (

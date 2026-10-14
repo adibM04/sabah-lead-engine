@@ -94,7 +94,7 @@ def section(text: str, heading: str) -> str:
 def gather() -> dict:
     stats: dict = {}
     stats["by_status"] = {r["status"]: r["n"] for r in d1("SELECT status, COUNT(*) n FROM leads GROUP BY status")}
-    stats["new_leads_7d"] = d1("SELECT COUNT(*) n FROM leads WHERE created_at >= datetime('now','-7 days')")[0]["n"]
+    stats["new_leads_7d"] = d1("SELECT COUNT(*) n FROM leads WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-7 days')")[0]["n"]
     stats["contacted"] = d1("SELECT COUNT(*) n FROM leads WHERE sent_at IS NOT NULL")[0]["n"]
     stats["by_category_and_pitch"] = d1(
         "SELECT category, pitch_type, COUNT(*) leads, "

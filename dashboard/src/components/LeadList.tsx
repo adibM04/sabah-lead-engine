@@ -1,6 +1,7 @@
 import type { Lead } from "../types";
 import { ChatIcon, Lattice, MailIcon } from "./icons";
 import StatusChip from "./StatusChip";
+import { leadScore, scoreSummary } from "../score";
 
 interface Props {
   leads: Lead[];
@@ -34,15 +35,20 @@ export default function LeadList({ leads, selectedId, showStatus, onSelect }: Pr
               onClick={() => onSelect(l.id)}
             >
               <span className="lead-name">{l.business_name}</span>
-              {showStatus ? (
-                <StatusChip status={l.status} />
-              ) : (
-                l.rating != null && (
-                  <span className="muted">
-                    {l.rating.toFixed(1)} <small>({l.reviews_count ?? 0})</small>
-                  </span>
-                )
-              )}
+              <span className="lead-side">
+                <span className="score" title={scoreSummary(l)} aria-label={`Score ${leadScore(l)} of 85`}>
+                  {leadScore(l)}
+                </span>
+                {showStatus ? (
+                  <StatusChip status={l.status} />
+                ) : (
+                  l.rating != null && (
+                    <span className="muted">
+                      {l.rating.toFixed(1)} <small>({l.reviews_count ?? 0})</small>
+                    </span>
+                  )
+                )}
+              </span>
               <span className="lead-meta">{[l.category, l.area].filter(Boolean).join(" · ")}</span>
               <span className="lead-flags">
                 <span className={`lead-flag${l.email ? " is-on" : ""}`} title={l.email ? "Has email" : "No email"}>

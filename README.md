@@ -99,3 +99,16 @@ Set `DEEPSEEK_API_KEY` in `pipeline/.env`. Model defaults to `deepseek-v4-pro` (
 ## Chat panel
 
 The sparkle button in the top bar opens a chat with DeepSeek on the right. It sees the selected lead (details, drafts, notes) and the active playbook, streams its replies, and can put a reply straight into the email or WhatsApp editor ("Use as email" / "Use as WhatsApp"). It cannot send anything. It uses the DeepSeek key saved under Settings, or a `DEEPSEEK_API_KEY` Pages variable if you set one. `DEEPSEEK_MODEL` (default `deepseek-v4-pro`) can also be set as a Pages variable.
+
+## Scans, scores, mock-ups, replies, backup
+
+- **Scans tab** shows the run that is happening now (progress, stalled warning), the history of runs, and a "Scan now" box. A request waits in `scan_requests`; Hermes runs `sabah-scan-requests.sh` every 2 minutes, which scrapes, audits and drafts, then sends a Telegram summary.
+- **Lead score** (0 to 85) sorts the list "Best first": no website 40 (social page only 30, has a site 10), reviews up to 20, rating 4.5+ gives 10 (4.0+ gives 5), email 15 (else a phone 5). The formula lives in three places that must match: `migrations/0005`, `pipeline/lead_engine.py` (`score_lead`) and `dashboard/src/score.ts`.
+- **Mock-ups**: the Mock-up tab on a lead builds a one-page concept from their website with DeepSeek. It is sandboxed (no scripts, nothing loaded from outside) and can be downloaded as HTML. `sabah-redraft.sh` builds requested ones; `sabah-weekly.sh` auto-builds a few for UI-fix leads.
+- **They replied?** Paste a reply on a lead and DeepSeek suggests a status and a short answer. Nothing is changed until you click.
+- **Insights** has the funnel (leads, contacted, replied, won) by category, pitch and playbook version.
+- **Backup**: Settings has CSV and full JSON downloads (API keys are never included).
+
+## Deploying without a laptop
+
+Pushing to `main` is enough. Cloudflare Pages builds the dashboard, and the first API request after a deploy applies any new files in `dashboard/migrations/` to D1 by itself (`functions/_lib/migrate.ts`; it uses the same `d1_migrations` table as wrangler). `npm run build` regenerates `functions/_lib/migrations.generated.ts` from the SQL files, so commit that file with new migrations.

@@ -26,6 +26,16 @@ export const onRequestPatch: PagesFunction<Env, "id"> = async ({ request, env, p
     values.push(body.redraft ? 1 : 0);
   }
 
+  if ("mockup" in body) {
+    if (body.mockup !== "request") {
+      return Response.json({ error: 'mockup can only be "request"' }, { status: 400 });
+    }
+    const l = await env.DB.prepare("SELECT website FROM leads WHERE id = ?").bind(id).first<{ website: string | null }>();
+    if (!l) return Response.json({ error: "Lead not found" }, { status: 404 });
+    if (!l.website) return Response.json({ error: "This business has no website to base a mock-up on" }, { status: 400 });
+    sets.push("mockup_status = 'requested'");
+  }
+
   for (const col of EDITABLE) {
     if (!(col in body)) continue;
     const v = body[col];

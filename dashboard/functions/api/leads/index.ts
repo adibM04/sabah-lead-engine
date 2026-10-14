@@ -1,14 +1,16 @@
 import type { Env } from "../../_lib/access";
+import { LEAD_COLS } from "../../_lib/leadcols";
 
 interface Row extends Record<string, unknown> {
   all_emails: string;
   has_whatsapp_link: number;
   uses_linktree: number;
+  has_mockup: number;
 }
 
 export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
   const { results } = await env.DB.prepare(
-    "SELECT * FROM leads ORDER BY created_at DESC LIMIT 2000",
+    `SELECT ${LEAD_COLS} FROM leads ORDER BY created_at DESC LIMIT 2000`,
   ).all<Row>();
 
   const leads = results.map((r) => ({
@@ -16,6 +18,7 @@ export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
     all_emails: safeArray(r.all_emails),
     has_whatsapp_link: r.has_whatsapp_link === 1,
     uses_linktree: r.uses_linktree === 1,
+    has_mockup: r.has_mockup === 1,
   }));
   return Response.json(leads);
 };

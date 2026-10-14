@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchLeads, fetchPlaybook, fetchQueries, updateLead } from "./api";
-import { GROUPS, type Lead } from "./types";
+import { GROUPS, type Lead, type LeadChanges } from "./types";
 import LeadList from "./components/LeadList";
 import LeadDetail from "./components/LeadDetail";
 import Insights from "./components/Insights";
 import Settings from "./components/Settings";
 import Chat from "./components/Chat";
+import Scans from "./components/Scans";
+import { leadScore } from "./score";
 import { Lattice, MoonIcon, SparkIcon, SunIcon } from "./components/icons";
 
 type Theme = "light" | "dark" | "auto";
@@ -27,6 +29,7 @@ export default function Desk() {
   const [onlyEmail, setOnlyEmail] = useState(false);
   const [category, setCategory] = useState("");
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"best" | "newest">("best");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showDetail, setShowDetail] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -70,13 +73,13 @@ export default function Desk() {
   }, []);
 
   const patch = useCallback(
-    async (id: string, changes: Partial<Lead>) => {
+    async (id: string, changes: LeadChanges) => {
       let previous: Lead | undefined;
       setLeads((all) =>
         all.map((l) => {
           if (l.id !== id) return l;
           previous = l;
-          return { ...l, ...changes };
+          return { ...l, ...changes } as Lead;
         }),
       );
       try {
@@ -100,19 +103,21 @@ export default function Desk() {
     [leads],
   );
 
-  const onLeadView = group !== "insights" && group !== "settings";
+  const onLeadView = group !== "insights" && group !== "settings" && group !== "scans";
 
   const visible = useMemo(() => {
     const g = GROUPS.find((x) => x.key === group);
     const q = query.trim().toLowerCase();
-    return leads.filter((l) => {
+    const list = leads.filter((l) => {
       if (g && !g.statuses.includes(l.status)) return false;
       if (onlyEmail && !l.email) return false;
       if (category && l.category !== category) return false;
       if (q && !`${l.business_name} ${l.area ?? ""} ${l.category ?? ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [leads, group, onlyEmail, category, query]);
+    if (sort === "best") list.sort((a, b) => leadScore(b) - leadScore(a) || b.created_at.localeCompare(a.created_at));
+    return list;
+  }, [leads, group, onlyEmail, category, query, sort]);
 
   const selected = visible.find((l) => l.id === selectedId) ?? null;
 
@@ -183,6 +188,9 @@ export default function Desk() {
         </nav>
 
         <div className="topbar-right">
+          <button className={`stage${group === "scans" ? " is-active" : ""}`} onClick={() => setGroup("scans")}>
+            Scans
+          </button>
           <button className={`stage${group === "insights" ? " is-active" : ""}`} onClick={() => setGroup("insights")}>
             Insights
             {pending > 0 && <span className="stage-count is-attn">{pending}</span>}
@@ -219,6 +227,13 @@ export default function Desk() {
               </div>
             </main>
           )}
+          {group === "scans" && (
+            <main className="page">
+              <div className="page-inner">
+                <Scans notify={notify} />
+              </div>
+            </main>
+          )}
           {group === "settings" && (
             <main className="page">
               <div className="page-inner">
@@ -246,6 +261,10 @@ export default function Desk() {
                           {c}
                         </option>
                       ))}
+                    </select>
+                    <select value={sort} onChange={(e) => setSort(e.target.value as "best" | "newest")} aria-label="Sort leads">
+                      <option value="best">Best first</option>
+                      <option value="newest">Newest first</option>
                     </select>
                     <label className="check">
                       <input type="checkbox" checked={onlyEmail} onChange={(e) => setOnlyEmail(e.target.checked)} />

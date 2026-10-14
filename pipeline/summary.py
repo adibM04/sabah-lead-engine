@@ -3,6 +3,7 @@
 Prints nothing when there is nothing worth saying (Hermes skips delivery on empty output).
     python summary.py weekly      # after the weekly scrape + review
     python summary.py followups   # after the daily follow-up run
+    python summary.py scans       # after a scan requested from the dashboard
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ def weekly() -> str:
 def followups() -> str:
     rows = d1(
         "SELECT business_name, followup_channel FROM leads WHERE status = 'follow_up' AND followup_draft IS NOT NULL "
-        "AND updated_at >= datetime('now', '-1 hour')"
+        "AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 hour')"
     )
     if not rows:
         return ""
@@ -36,8 +37,26 @@ def followups() -> str:
     return f"{len(rows)} follow-up draft(s) ready: {names}. Open the Follow up tab, or ask me."
 
 
+def scans() -> str:
+    """Manual scans (requested from the dashboard) that finished and have not been reported yet."""
+    import json
+
+    rows = d1("SELECT * FROM scan_runs WHERE source = 'manual' AND status IN ('done','failed') AND notified = 0 ORDER BY id")
+    if not rows:
+        return ""
+    lines = []
+    for r in rows:
+        q = ", ".join(json.loads(r["queries"]))
+        if r["status"] == "done":
+            lines.append(f"Scan finished: {q}. {r['new_leads']} new leads, {r['skipped']} already known, {r['failed']} draft failures.")
+        else:
+            lines.append(f"Scan failed: {q}. {r['error'] or 'Unknown error'}")
+        d1("UPDATE scan_runs SET notified = 1 WHERE id = ?", [r["id"]])
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     kind = sys.argv[1] if len(sys.argv) > 1 else ""
-    text = {"weekly": weekly, "followups": followups}.get(kind, lambda: "")()
+    text = {"weekly": weekly, "followups": followups, "scans": scans}.get(kind, lambda: "")()
     if text:
         print(text)

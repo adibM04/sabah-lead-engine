@@ -94,6 +94,22 @@ export default function Settings({ notify }: { notify: (m: string) => void }) {
           );
         })}
       </section>
+
+      <section className="card">
+        <h2>Backup</h2>
+        <p className="muted">
+          The spreadsheet has every lead with its drafts, score and notes. The full backup also holds the playbook history, search queries and
+          scan runs. API keys and mock-ups are left out.
+        </p>
+        <div className="actions">
+          <a className="btn btn-primary" href="/api/export?format=csv" download>
+            Download leads (CSV)
+          </a>
+          <a className="btn" href="/api/export?format=json" download>
+            Full backup (JSON)
+          </a>
+        </div>
+      </section>
     </div>
   );
 }
