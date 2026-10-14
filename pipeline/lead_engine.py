@@ -1,14 +1,15 @@
 """Sabah Lead Engine.
 
 Scrapes Google Maps (Apify), audits each business's web presence,
-drafts a personalised cold email with Gemini, and saves everything into
+drafts a personalised cold email and WhatsApp text with DeepSeek, and saves everything into
 Cloudflare D1 for review in the dashboard. Sending stays manual (Zoho).
 
 Usage:
     python lead_engine.py                       # uses queries.json
     python lead_engine.py --max 15              # leads per query
     python lead_engine.py --query "dental clinic in Sandakan"
-    python lead_engine.py --dry-run             # no database reads or writes
+    python lead_engine.py --dry-run             # no database writes
+    python lead_engine.py --backfill --max 40   # draft for leads that have none yet
 """
 from __future__ import annotations
 
@@ -23,22 +24,21 @@ from pathlib import Path
 import requests
 from apify_client import ApifyClient
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 from pydantic import BaseModel, Field
+
+from llm import chat_json
 
 load_dotenv(Path(__file__).with_name(".env"))
 
 APIFY_TOKEN = os.environ["APIFY_TOKEN"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 CF_ACCOUNT_ID = os.environ["CF_ACCOUNT_ID"]
 CF_D1_DATABASE_ID = os.environ["CF_D1_DATABASE_ID"]
 CF_API_TOKEN = os.environ["CF_API_TOKEN"]  # needs D1 Edit permission only
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 SENDER_NAME = os.getenv("SENDER_NAME", "Adib")
 STUDIO_NAME = os.getenv("STUDIO_NAME", "Smart Native Maker")
 
 QUERIES_FILE = Path(__file__).with_name("queries.json")
+DEFAULT_PLAYBOOK = Path(__file__).with_name("playbook_default.md")
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 BAD_EMAIL_SUFFIXES = (
     ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js",
@@ -47,7 +47,6 @@ BAD_EMAIL_SUFFIXES = (
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 apify = ApifyClient(APIFY_TOKEN)
-gemini = genai.Client(api_key=GEMINI_API_KEY)
 
 D1_URL = (
     f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}"
@@ -70,11 +69,14 @@ def d1(sql: str, params: list | None = None) -> list[dict]:
 
 
 class Outreach(BaseModel):
-    detected_bottleneck: str = Field(description="One line: what is missing or broken in their online funnel")
-    email_subject: str = Field(description="Short, casual subject line mentioning the business name")
-    observation_hook: str = Field(description="One specific sentence about what you noticed on their website, socials or reviews")
-    custom_fix_pitch: str = Field(description=f"One specific sentence on what {STUDIO_NAME} can build to fix it")
-    full_email_draft: str = Field(description=f"Complete plain-text email, signed by {SENDER_NAME} from {STUDIO_NAME}")
+    detected_bottleneck: str = Field(description="One line: what is missing or hard to use in their online funnel")
+    pitch_type: str = Field(description="One of: website, internal_system, ui_fix, mixed")
+    observation_hook: str = Field(description="One specific sentence about what you noticed")
+    evidence: list[str] = Field(default_factory=list, description="Word-for-word quotes from the supplied page text that back any claim about their website. Empty list if you make no such claim.")
+    custom_fix_pitch: str = Field(description=f"One specific sentence on what {STUDIO_NAME} can do for them")
+    email_subject: str = Field(default="", description="Short subject naming the business. Empty string if the lead has no email address.")
+    full_email_draft: str = Field(default="", description="Complete plain-text email. Empty string if the lead has no email address.")
+    whatsapp_text: str = Field(description="WhatsApp message, 35 to 60 words")
 
 
 # ---------------------------------------------------------------- scrape
@@ -132,45 +134,85 @@ def audit(url: str | None) -> dict:
 
 
 # ----------------------------------------------------------------- draft
-def draft(lead: dict, a: dict) -> Outreach:
-    prompt = f"""
-You are {SENDER_NAME}, CTO of '{STUDIO_NAME}', a local software and workflow automation studio in Sabah.
-Write a cold email to a local Sabah business.
+def norm(t: str) -> str:
+    return re.sub(r"\W+", " ", t.lower()).strip()
 
+
+def check_evidence(out: Outreach, preview: str) -> list[str]:
+    """Return warnings for evidence quotes that do not appear in the fetched page text."""
+    flags = []
+    haystack = norm(preview)
+    for quote in out.evidence:
+        if norm(quote) and norm(quote) not in haystack:
+            flags.append(f"Unverified claim, quote not found on page: {quote[:80]}")
+    if not out.evidence and re.search(r"\b(homepage|header|button|popup|layout|menu bar)\b", out.observation_hook, re.I):
+        flags.append("Describes the site but gave no evidence quote. Check it by eye.")
+    return flags
+
+
+def draft(lead: dict, a: dict, playbook: str) -> tuple[Outreach, list[str]]:
+    hint = lead.get("custom_fix")
+    user = f"""
 BUSINESS
 - Name: {lead['business_name']}
 - Category: {lead['category']}
 - Area: {lead['area']}
 - Google rating: {lead['rating']} stars ({lead['reviews_count']} reviews)
 - Website: {lead['website'] or 'None (only Google Maps / socials)'}
+- Has an email address: {bool(lead.get('email'))}
 
 AUDIT SIGNALS
 - Direct WhatsApp link on site: {a['whatsapp']}
 - Uses Linktree: {a['linktree']}
-- Homepage content: {a['preview'][:1200]}
+- Homepage text (may be empty or truncated): {a['preview'][:2500]}
+{f"- Earlier note on the best angle (treat as a hint, still follow the grounding rule): {hint}" if hint else ""}
 
-INSTRUCTIONS
-1. Name one real operational or conversion bottleneck from these signals. Examples: no website means they lose high-intent Google searches; everything routed to manual WhatsApp means staff answer the same questions and send the same PDFs all day; a basic site means no online booking or lead qualification.
-2. Only claim what the signals support. Do not invent features, prices or facts about them.
-3. Email: 90-120 words, natural, non-salesy, local tone.
-4. Say pricing is scoped to what they actually need, with no bloated agency packages.
-5. Offer a casual 15-minute coffee near their area or a quick online call.
+Write the outreach for this business, following the playbook exactly.
 """
-    resp = gemini.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=Outreach,
-            temperature=0.4,
-        ),
-    )
-    return Outreach.model_validate_json(resp.text)
+    out = chat_json(playbook, user, Outreach)
+    return out, check_evidence(out, a["preview"])
 
 
 # -------------------------------------------------------------- pipeline
 def existing_place_ids() -> set[str]:
     return {r["place_id"] for r in d1("SELECT place_id FROM leads")}
+
+
+def load_playbook(dry_run: bool) -> tuple[str, int | None]:
+    """Active playbook from D1 (seeding v1 from playbook_default.md on first run)."""
+    default = DEFAULT_PLAYBOOK.read_text(encoding="utf-8")
+    if dry_run:
+        return default, None
+    rows = d1("SELECT version, content FROM playbook WHERE status = 'active' ORDER BY version DESC LIMIT 1")
+    if not rows:
+        d1("INSERT INTO playbook (content, status, rationale, decided_at) VALUES (?, 'active', 'Initial playbook', strftime('%Y-%m-%dT%H:%M:%SZ','now'))", [default])
+        rows = d1("SELECT version, content FROM playbook WHERE status = 'active' ORDER BY version DESC LIMIT 1")
+    return rows[0]["content"], rows[0]["version"]
+
+
+DRAFT_COLS = (
+    "detected_bottleneck", "pitch_type", "email_subject", "observation_hook",
+    "custom_fix", "email_draft", "whatsapp_draft", "draft_flags", "playbook_version",
+)
+
+
+def apply_draft(lead: dict, out: Outreach, flags: list[str], version: int | None) -> None:
+    lead.update(
+        detected_bottleneck=out.detected_bottleneck,
+        pitch_type=out.pitch_type if out.pitch_type in ("website", "internal_system", "ui_fix", "mixed") else "mixed",
+        email_subject=out.email_subject or None,
+        observation_hook=out.observation_hook,
+        custom_fix=out.custom_fix_pitch,
+        email_draft=out.full_email_draft or None,
+        whatsapp_draft=out.whatsapp_text,
+        draft_flags=json.dumps(flags) if flags else None,
+        playbook_version=version,
+    )
+
+
+def update_draft(lead_id: str, lead: dict) -> None:
+    sets = ", ".join(f"{c} = ?" for c in DRAFT_COLS)
+    d1(f"UPDATE leads SET {sets} WHERE id = ?", [lead[c] for c in DRAFT_COLS] + [lead_id])
 
 
 def save_lead(lead: dict) -> None:
@@ -205,6 +247,7 @@ def to_lead(place: dict, query_hint: str | None) -> dict:
 
 
 def run(queries: list[str], max_results: int, dry_run: bool) -> None:
+    playbook, version = load_playbook(dry_run)
     known = set() if dry_run else existing_place_ids()
     places = scrape(queries, max_results)
     saved = skipped = failed = 0
@@ -229,19 +272,12 @@ def run(queries: list[str], max_results: int, dry_run: bool) -> None:
         )
 
         try:
-            out = draft(lead, a)
+            out, flags = draft(lead, a, playbook)
         except Exception as e:  # noqa: BLE001
             print(f"   [draft] failed: {e}")
             failed += 1
             continue
-
-        lead.update(
-            detected_bottleneck=out.detected_bottleneck,
-            email_subject=out.email_subject,
-            observation_hook=out.observation_hook,
-            custom_fix=out.custom_fix_pitch,
-            email_draft=out.full_email_draft,
-        )
+        apply_draft(lead, out, flags, version)
 
         if dry_run:
             print(json.dumps(lead, indent=2, ensure_ascii=False))
@@ -253,12 +289,43 @@ def run(queries: list[str], max_results: int, dry_run: bool) -> None:
     print(f"\n[done] saved {saved}, already known {skipped}, draft failures {failed}")
 
 
+def backfill(limit: int) -> None:
+    """Draft for leads already in D1 that have no draft yet (e.g. the hand-built seed list)."""
+    playbook, version = load_playbook(False)
+    rows = d1(
+        "SELECT * FROM leads WHERE email_draft IS NULL AND whatsapp_draft IS NULL AND status = 'new' "
+        "ORDER BY created_at LIMIT ?",
+        [limit],
+    )
+    print(f"[backfill] {len(rows)} leads without drafts")
+    done = failed = 0
+    for i, lead in enumerate(rows, 1):
+        print(f"[{i}/{len(rows)}] {lead['business_name']}")
+        a = audit(lead["website"])
+        try:
+            out, flags = draft(lead, a, playbook)
+        except Exception as e:  # noqa: BLE001
+            print(f"   [draft] failed: {e}")
+            failed += 1
+            continue
+        apply_draft(lead, out, flags, version)
+        update_draft(lead["id"], lead)
+        done += 1
+        time.sleep(1)
+    print(f"\n[done] drafted {done}, failed {failed}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--query", action="append", help="search query (repeatable); overrides queries.json")
     p.add_argument("--max", type=int, default=10, help="max places per query")
     p.add_argument("--dry-run", action="store_true", help="print leads, do not touch the database")
+    p.add_argument("--backfill", action="store_true", help="draft for existing leads that have no draft; skips scraping")
     args = p.parse_args()
+
+    if args.backfill:
+        backfill(args.max)
+        return
 
     queries = args.query or json.loads(QUERIES_FILE.read_text())
     if not queries:

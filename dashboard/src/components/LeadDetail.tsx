@@ -22,6 +22,19 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
   const [body, setBody] = useState(lead.draft_edited ?? original);
   const [notes, setNotes] = useState(lead.notes ?? "");
   const edited = body !== original;
+  const waOriginal = lead.whatsapp_draft ?? "";
+  const [wa, setWa] = useState(lead.whatsapp_edited ?? waOriginal);
+  const waEdited = wa !== waOriginal;
+  const flags: string[] = (() => {
+    try {
+      const v = lead.draft_flags ? JSON.parse(lead.draft_flags) : [];
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  })();
+  const waDigits = (lead.whatsapp_link ?? "").replace(/\D/g, "");
+  const waHref = waDigits ? `https://wa.me/${waDigits}?text=${encodeURIComponent(wa)}` : null;
 
   async function copy(text: string, label: string) {
     try {
@@ -35,6 +48,11 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
   function saveBody() {
     const next = body === original ? null : body;
     if (next !== (lead.draft_edited ?? null)) onPatch(lead.id, { draft_edited: next });
+  }
+
+  function saveWa() {
+    const next = wa === waOriginal ? null : wa;
+    if (next !== (lead.whatsapp_edited ?? null)) onPatch(lead.id, { whatsapp_edited: next });
   }
 
   function saveNotes() {
@@ -103,6 +121,17 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
         </p>
       </section>
 
+      {flags.length > 0 && (
+        <section className="signals" aria-label="Check before sending">
+          <p><strong>Check before sending</strong></p>
+          <ul>
+            {flags.map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="composer" aria-label="Email draft">
         <div className="composer-bar">
           <span className="composer-title">Draft</span>
@@ -155,8 +184,38 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
         )}
       </section>
 
+      {lead.whatsapp_draft !== null && (
+        <section className="composer" aria-label="WhatsApp draft">
+          <div className="composer-bar">
+            <span className="composer-title">WhatsApp</span>
+            {waEdited && <span className="tag">Edited</span>}
+          </div>
+          <label className="sr-only" htmlFor="wa-body">
+            WhatsApp text
+          </label>
+          <textarea
+            id="wa-body"
+            className="composer-body"
+            value={wa}
+            onChange={(e) => setWa(e.target.value)}
+            onBlur={saveWa}
+            rows={5}
+          />
+          <div className="actions">
+            <button className="btn" onClick={() => copy(wa, "WhatsApp text")}>
+              Copy WhatsApp text
+            </button>
+            {waHref && (
+              <a className="btn" href={waHref} target="_blank" rel="noreferrer">
+                Open in WhatsApp with text
+              </a>
+            )}
+          </div>
+        </section>
+      )}
+
       <div className="actions">
-        <button className="btn btn-primary" onClick={() => copy(body, "Email")}>
+        <button className="btn btn-primary" onClick={() => copy(body, "Email")} disabled={!lead.email_draft}>
           Copy email
         </button>
         {mailto && (

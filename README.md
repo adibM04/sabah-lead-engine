@@ -3,7 +3,7 @@
 Scrape Sabah businesses, audit their web presence, draft a personalised cold email, and review everything in a dashboard. You send from Zoho by hand.
 
 ```
-pipeline/   Python: Apify -> audit -> Gemini draft -> Cloudflare D1 (runs on the AWS box)
+pipeline/   Python: Apify -> audit -> DeepSeek draft -> Cloudflare D1 (runs on the AWS box)
 dashboard/  React + Vite review desk, Pages Functions API, D1 migrations (Cloudflare Pages)
 ```
 
@@ -70,3 +70,12 @@ npm run preview                    # builds, then serves the app and API on loca
 - Re-runs skip places already in the database (`place_id` is unique).
 - Check every draft before sending. The model only sees homepage text and basic signals, so it can misread a business.
 - Cold email to businesses in Malaysia falls under PDPA. Keep drafts honest, identify yourself clearly, and stop contacting anyone who asks.
+
+## Drafting with DeepSeek
+
+Drafts follow the active row in the `playbook` table (v1 is seeded from `pipeline/playbook_default.md` on first run). Each lead gets an email draft (only if it has an email) and a WhatsApp text. Claims about a website must carry a word-for-word quote from the fetched page; quotes that can't be found are shown as "Check before sending".
+
+```
+python lead_engine.py --backfill --max 40   # draft for leads that have none (e.g. the seeded list)
+```
+Set `DEEPSEEK_API_KEY` in `pipeline/.env`. Model defaults to `deepseek-v4-pro` (`DEEPSEEK_MODEL`).

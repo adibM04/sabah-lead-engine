@@ -33,6 +33,11 @@ export interface Lead {
   custom_fix: string | null;
   email_draft: string | null;
   draft_edited: string | null;
+  whatsapp_draft: string | null;
+  whatsapp_edited: string | null;
+  pitch_type: string | null;
+  draft_flags: string | null;
+  playbook_version: number | null;
   status: LeadStatus;
   notes: string | null;
   sent_at: string | null;
