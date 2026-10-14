@@ -45,7 +45,7 @@ Everything lives on Cloudflare except the weekly pipeline run. The dashboard log
    python lead_engine.py --dry-run --max 2 --query "dental clinic in Kota Kinabalu"
    python lead_engine.py --max 3 --query "dental clinic in Kota Kinabalu"   # real write
    ```
-   Schedules (UTC; KL is +8):
+   Schedules. If you use Hermes, skip this and follow `hermes/README.md` instead (don't run both). System cron, UTC (KL is +8):
    ```
    crontab -e
    0 23 * * 0   cd ~/sabah-lead-engine/pipeline && flock -n /tmp/lead.lock sh -c '.venv/bin/python lead_engine.py --max 15 && .venv/bin/python weekly.py --only review' >> run.log 2>&1
