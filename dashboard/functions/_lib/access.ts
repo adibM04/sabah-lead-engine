@@ -6,6 +6,7 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string; // e.g. yourteam.cloudflareaccess.com
   ACCESS_AUD?: string; // Access application AUD tag
   DEV_BYPASS?: string; // "1" for local wrangler dev only
+  SETTINGS_KEY?: string; // master secret that encrypts API keys stored from the dashboard
   DASH_PASSWORD?: string; // shared password, checked via HTTP Basic auth (any username)
 }
 

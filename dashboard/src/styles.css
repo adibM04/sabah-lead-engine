@@ -669,3 +669,23 @@ code {
     transition: none !important;
   }
 }
+
+/* Insights and settings */
+.tab-right { margin-left: auto; }
+.tab-alert { background: var(--primary); color: var(--primary-ink); }
+.page { max-width: 880px; margin: 0 auto; padding: 20px 16px 48px; }
+.insights { display: grid; gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); display: grid; gap: 12px; }
+.card h2 { font-size: 17px; }
+.digest { white-space: pre-wrap; line-height: 1.55; }
+.diff { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: auto; max-height: 420px; background: var(--surface-2); }
+.diff-line { display: flex; gap: 8px; padding: 1px 10px; white-space: pre-wrap; }
+.diff-add { background: #d8efe0; }
+.diff-del { background: var(--danger-bg); color: var(--danger-ink); }
+.active-playbook summary { cursor: pointer; color: var(--primary); }
+.active-playbook pre { white-space: pre-wrap; font-size: 13px; background: var(--surface-2); padding: 12px; border-radius: var(--radius-sm); margin: 8px 0 0; }
+.query-list { display: grid; gap: 10px; }
+.query-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; }
+.secret-row { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.secret-row input { flex: 1; min-width: 220px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.pad-text { padding: 4px 2px; white-space: pre-wrap; }

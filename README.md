@@ -45,11 +45,27 @@ Everything lives on Cloudflare except the weekly pipeline run. The dashboard log
    python lead_engine.py --dry-run --max 2 --query "dental clinic in Kota Kinabalu"
    python lead_engine.py --max 3 --query "dental clinic in Kota Kinabalu"   # real write
    ```
-   Weekly run, Mondays 7am Kuching (23:00 UTC Sunday):
+   Schedules (UTC; KL is +8):
    ```
-   (crontab -l 2>/dev/null; echo '0 23 * * 0 cd ~/sabah-lead-engine/pipeline && flock -n /tmp/lead.lock .venv/bin/python lead_engine.py --max 15 >> run.log 2>&1') | crontab -
+   crontab -e
+   0 23 * * 0   cd ~/sabah-lead-engine/pipeline && flock -n /tmp/lead.lock sh -c '.venv/bin/python lead_engine.py --max 15 && .venv/bin/python weekly.py --only review' >> run.log 2>&1
+   30 23 * * *  cd ~/sabah-lead-engine/pipeline && flock -n /tmp/lead.lock .venv/bin/python weekly.py --only followups >> run.log 2>&1
+   */30 * * * * cd ~/sabah-lead-engine/pipeline && flock -n /tmp/lead.lock .venv/bin/python lead_engine.py --redraft --max 5 >> run.log 2>&1
    ```
-   Update later with `git pull`.
+   Weekly (Mon 07:00): scrape, then the review. Daily 07:30: follow-up drafts. Every 30 min: regenerate drafts you queued. Update later with `git pull` and `npm run db:migrate`.
+
+6. **API keys from the dashboard (optional)**: add a Pages secret `SETTINGS_KEY` (16+ random characters, `npx wrangler pages secret put SETTINGS_KEY --project-name sabah-lead-engine`), put the same value in the pipeline `.env`, then enter the DeepSeek and Apify keys under Settings. They are stored AES-GCM encrypted and the page can never read them back. Without this, put the keys in `.env`.
+
+## The weekly agent
+
+`weekly.py` runs fixed steps. It never sends a message and never changes its own rules:
+
+1. Reads outcomes, your edits to drafts, and skip/loss reasons.
+2. Proposes a new playbook version (diff shown in Insights). Only you can approve it. The Grounding section is locked: a proposal that edits it is discarded.
+3. Suggests new search queries. You click Use or Dismiss.
+4. Drafts one follow-up per lead when `follow_up_at` is due.
+
+Approved playbooks apply to new drafts straight away; unedited drafts in "To review" refresh on the next 30-minute run.
 
 ## Daily flow
 

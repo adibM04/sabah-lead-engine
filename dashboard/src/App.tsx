@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchLeads, updateLead } from "./api";
+import { fetchLeads, fetchPlaybook, fetchQueries, updateLead } from "./api";
 import { GROUPS, type Lead } from "./types";
 import LeadList from "./components/LeadList";
 import LeadDetail from "./components/LeadDetail";
+import Insights from "./components/Insights";
+import Settings from "./components/Settings";
 
 export default function Desk() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -16,6 +18,14 @@ export default function Desk() {
   const [showDetail, setShowDetail] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
+  const [pending, setPending] = useState(0);
+
+  const refreshPending = useCallback(() => {
+    Promise.all([fetchPlaybook(), fetchQueries()])
+      .then(([p, q]) => setPending((p.proposed ? 1 : 0) + q.filter((x) => x.status === "suggested").length))
+      .catch(() => setPending(0));
+  }, []);
+  useEffect(refreshPending, [refreshPending]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -115,9 +125,6 @@ export default function Desk() {
       <header className="topbar">
         <h1>Lead Desk</h1>
         <p className="muted kbd-hint">j / k move, c copy, s sent, x skip</p>
-        <a className="btn btn-quiet" href="/cdn-cgi/access/logout">
-          Sign out
-        </a>
       </header>
 
       <nav className="tabs" aria-label="Lead stage">
@@ -135,9 +142,27 @@ export default function Desk() {
           All
           <span className="tab-count">{leads.length}</span>
         </button>
+        <button className={`tab tab-right${group === "insights" ? " is-active" : ""}`} onClick={() => setGroup("insights")}>
+          Insights
+          {pending > 0 && <span className="tab-count tab-alert">{pending}</span>}
+        </button>
+        <button className={`tab${group === "settings" ? " is-active" : ""}`} onClick={() => setGroup("settings")}>
+          Settings
+        </button>
       </nav>
 
-      <div className={`layout${showDetail ? " show-detail" : ""}`}>
+      {group === "insights" && (
+        <main className="page">
+          <Insights notify={notify} onChanged={refreshPending} />
+        </main>
+      )}
+      {group === "settings" && (
+        <main className="page">
+          <Settings notify={notify} />
+        </main>
+      )}
+
+      <div className={`layout${showDetail ? " show-detail" : ""}`} hidden={group === "insights" || group === "settings"}>
         <aside className="pane pane-list">
           <div className="filters">
             <input

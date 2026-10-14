@@ -10,6 +10,7 @@ Usage:
     python lead_engine.py --query "dental clinic in Sandakan"
     python lead_engine.py --dry-run             # no database writes
     python lead_engine.py --backfill --max 40   # draft for leads that have none yet
+    python lead_engine.py --redraft --max 10    # regenerate drafts you queued, or stale unedited ones
 """
 from __future__ import annotations
 
@@ -26,14 +27,11 @@ from apify_client import ApifyClient
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from db import d1, secret
 from llm import chat_json
 
 load_dotenv(Path(__file__).with_name(".env"))
 
-APIFY_TOKEN = os.environ["APIFY_TOKEN"]
-CF_ACCOUNT_ID = os.environ["CF_ACCOUNT_ID"]
-CF_D1_DATABASE_ID = os.environ["CF_D1_DATABASE_ID"]
-CF_API_TOKEN = os.environ["CF_API_TOKEN"]  # needs D1 Edit permission only
 SENDER_NAME = os.getenv("SENDER_NAME", "Adib")
 STUDIO_NAME = os.getenv("STUDIO_NAME", "Smart Native Maker")
 
@@ -45,27 +43,6 @@ BAD_EMAIL_SUFFIXES = (
     "sentry.io", "example.com", "wixpress.com", "domain.com",
 )
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-
-apify = ApifyClient(APIFY_TOKEN)
-
-D1_URL = (
-    f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}"
-    f"/d1/database/{CF_D1_DATABASE_ID}/query"
-)
-
-
-def d1(sql: str, params: list | None = None) -> list[dict]:
-    """Run one SQL statement against D1 and return the result rows."""
-    resp = requests.post(
-        D1_URL,
-        headers={"Authorization": f"Bearer {CF_API_TOKEN}"},
-        json={"sql": sql, "params": params or []},
-        timeout=30,
-    )
-    body = resp.json()
-    if not resp.ok or not body.get("success"):
-        raise RuntimeError(f"D1 error {resp.status_code}: {body.get('errors')}")
-    return body["result"][0].get("results", [])
 
 
 class Outreach(BaseModel):
@@ -82,6 +59,7 @@ class Outreach(BaseModel):
 # ---------------------------------------------------------------- scrape
 def scrape(queries: list[str], max_results: int) -> list[dict]:
     print(f"[scrape] {len(queries)} queries, up to {max_results} each")
+    apify = ApifyClient(secret("apify_token", "APIFY_TOKEN"))
     run = apify.actor("compass/crawler-google-places").call(
         run_input={
             "searchStringsArray": queries,
@@ -210,9 +188,21 @@ def apply_draft(lead: dict, out: Outreach, flags: list[str], version: int | None
     )
 
 
-def update_draft(lead_id: str, lead: dict) -> None:
-    sets = ", ".join(f"{c} = ?" for c in DRAFT_COLS)
+def update_draft(lead_id: str, lead: dict, clear_edits: bool = False) -> None:
+    sets = ", ".join(f"{c} = ?" for c in DRAFT_COLS) + ", redraft = 0"
+    if clear_edits:
+        sets += ", draft_edited = NULL, whatsapp_edited = NULL"
     d1(f"UPDATE leads SET {sets} WHERE id = ?", [lead[c] for c in DRAFT_COLS] + [lead_id])
+
+
+def get_queries() -> list[str]:
+    """Active search queries from D1. First run seeds them from queries.json."""
+    rows = d1("SELECT query FROM search_queries WHERE status = 'active' ORDER BY id")
+    if not rows:
+        for q in json.loads(QUERIES_FILE.read_text()):
+            d1("INSERT OR IGNORE INTO search_queries (query, status, reason) VALUES (?, 'active', 'Initial list')", [q])
+        rows = d1("SELECT query FROM search_queries WHERE status = 'active' ORDER BY id")
+    return [r["query"] for r in rows]
 
 
 def save_lead(lead: dict) -> None:
@@ -315,19 +305,48 @@ def backfill(limit: int) -> None:
     print(f"\n[done] drafted {done}, failed {failed}")
 
 
+def redraft(limit: int) -> None:
+    """Regenerate drafts you queued from the dashboard, plus unedited 'new' drafts written by an older playbook."""
+    playbook, version = load_playbook(False)
+    rows = d1(
+        "SELECT * FROM leads WHERE redraft = 1 OR (status = 'new' AND draft_edited IS NULL AND whatsapp_edited IS NULL "
+        "AND playbook_version IS NOT NULL AND playbook_version < ?) ORDER BY redraft DESC, created_at LIMIT ?",
+        [version, limit],
+    )
+    if not rows:
+        return
+    print(f"[redraft] {len(rows)} leads")
+    for i, lead in enumerate(rows, 1):
+        print(f"[{i}/{len(rows)}] {lead['business_name']}")
+        a = audit(lead["website"])
+        try:
+            out, flags = draft(lead, a, playbook)
+        except Exception as e:  # noqa: BLE001
+            print(f"   [draft] failed: {e}")
+            continue
+        apply_draft(lead, out, flags, version)
+        update_draft(lead["id"], lead, clear_edits=bool(lead.get("redraft")))
+        time.sleep(1)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--query", action="append", help="search query (repeatable); overrides queries.json")
     p.add_argument("--max", type=int, default=10, help="max places per query")
     p.add_argument("--dry-run", action="store_true", help="print leads, do not touch the database")
     p.add_argument("--backfill", action="store_true", help="draft for existing leads that have no draft; skips scraping")
+    p.add_argument("--redraft", action="store_true", help="regenerate queued or stale drafts; skips scraping")
     args = p.parse_args()
+
+    if args.redraft:
+        redraft(args.max)
+        return
 
     if args.backfill:
         backfill(args.max)
         return
 
-    queries = args.query or json.loads(QUERIES_FILE.read_text())
+    queries = args.query or (json.loads(QUERIES_FILE.read_text()) if args.dry_run else get_queries())
     if not queries:
         sys.exit("No queries. Add some to queries.json or pass --query.")
     run(queries, args.max, args.dry_run)

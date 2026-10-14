@@ -3,7 +3,7 @@ import type { Env } from "../../_lib/access";
 const STATUSES = ["new", "approved", "sent", "whatsapp", "replied", "follow_up", "won", "lost", "skipped"];
 
 // Only these columns can be changed from the dashboard.
-const EDITABLE = ["status", "notes", "draft_edited", "whatsapp_edited", "sent_at", "follow_up_at"] as const;
+const EDITABLE = ["status", "notes", "draft_edited", "whatsapp_edited", "outcome_reason", "sent_at", "follow_up_at"] as const;
 
 export const onRequestPatch: PagesFunction<Env, "id"> = async ({ request, env, params }) => {
   const id = String(params.id);
@@ -17,6 +17,14 @@ export const onRequestPatch: PagesFunction<Env, "id"> = async ({ request, env, p
 
   const sets: string[] = [];
   const values: unknown[] = [];
+
+  if ("redraft" in body) {
+    if (typeof body.redraft !== "boolean") {
+      return Response.json({ error: "redraft must be true or false" }, { status: 400 });
+    }
+    sets.push("redraft = ?");
+    values.push(body.redraft ? 1 : 0);
+  }
 
   for (const col of EDITABLE) {
     if (!(col in body)) continue;

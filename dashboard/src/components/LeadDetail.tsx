@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { STATUS_LABEL, type Lead, type LeadStatus } from "../types";
+import { OUTCOME_REASONS, STATUS_LABEL, type Lead, type LeadStatus } from "../types";
 import StatusChip from "./StatusChip";
 
 interface Props {
@@ -233,7 +233,41 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
         )}
       </div>
 
+      {lead.followup_draft && (
+        <section className="composer" aria-label="Follow-up draft">
+          <div className="composer-bar">
+            <span className="composer-title">Follow-up ({lead.followup_channel ?? "message"})</span>
+          </div>
+          <p className="composer-value pad-text">{lead.followup_draft}</p>
+          <div className="actions">
+            <button className="btn" onClick={() => copy(lead.followup_draft!, "Follow-up")}>
+              Copy follow-up
+            </button>
+            {lead.followup_channel === "whatsapp" && waDigits && (
+              <a
+                className="btn"
+                href={`https://wa.me/${waDigits}?text=${encodeURIComponent(lead.followup_draft)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open in WhatsApp with text
+              </a>
+            )}
+          </div>
+        </section>
+      )}
+
       <div className="actions actions-secondary">
+        <button
+          className="btn btn-quiet"
+          disabled={Boolean(lead.redraft)}
+          onClick={() => {
+            onPatch(lead.id, { redraft: true } as Partial<Lead>);
+            notify("Queued. A fresh draft appears within about 30 minutes. Your edits to this draft will be replaced.");
+          }}
+        >
+          {lead.redraft ? "Regenerating" : "Regenerate draft"}
+        </button>
         {lead.status === "new" && (
           <button className="btn btn-quiet" onClick={() => onPatch(lead.id, { status: "approved" })}>
             Approve
@@ -276,6 +310,22 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
             onChange={(e) => onPatch(lead.id, { follow_up_at: e.target.value || null })}
           />
         </label>
+        {(lead.status === "lost" || lead.status === "skipped") && (
+          <label>
+            Why
+            <select
+              value={lead.outcome_reason ?? ""}
+              onChange={(e) => onPatch(lead.id, { outcome_reason: e.target.value || null })}
+            >
+              <option value="">Not recorded</option>
+              {OUTCOME_REASONS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="tracking-notes">
           Notes
           <textarea

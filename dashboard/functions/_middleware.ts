@@ -9,5 +9,15 @@ export const onRequest: PagesFunction<Env> = async (ctx) => {
       headers: { "WWW-Authenticate": 'Basic realm="Lead desk", charset="UTF-8"' },
     });
   }
+
+  // Browsers re-send saved Basic credentials on cross-site requests, so a foreign page
+  // could otherwise trigger writes. Writes must come from this site's own pages.
+  const m = ctx.request.method;
+  if (m !== "GET" && m !== "HEAD" && m !== "OPTIONS") {
+    const origin = ctx.request.headers.get("Origin");
+    if (origin !== new URL(ctx.request.url).origin) {
+      return Response.json({ error: "Cross-site request blocked" }, { status: 403 });
+    }
+  }
   return ctx.next();
 };
