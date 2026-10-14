@@ -5,6 +5,19 @@ import LeadList from "./components/LeadList";
 import LeadDetail from "./components/LeadDetail";
 import Insights from "./components/Insights";
 import Settings from "./components/Settings";
+import Chat from "./components/Chat";
+import { Lattice, MoonIcon, SparkIcon, SunIcon } from "./components/icons";
+
+type Theme = "light" | "dark" | "auto";
+
+function readTheme(): Theme {
+  try {
+    const v = localStorage.getItem("lead-desk-theme");
+    return v === "light" || v === "dark" ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
 
 export default function Desk() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -19,6 +32,28 @@ export default function Desk() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const [pending, setPending] = useState(0);
+  const [chatOpen, setChatOpen] = useState(() => window.innerWidth >= 1280);
+  const [theme, setTheme] = useState<Theme>(readTheme);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "auto") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
+    try {
+      if (theme === "auto") localStorage.removeItem("lead-desk-theme");
+      else localStorage.setItem("lead-desk-theme", theme);
+    } catch {
+      // private mode: the theme still applies for this visit
+    }
+  }, [theme]);
+
+  const isDark = theme === "dark" || (theme === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+  const notify = useCallback((message: string) => {
+    setToast(message);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2800);
+  }, []);
 
   const refreshPending = useCallback(() => {
     Promise.all([fetchPlaybook(), fetchQueries()])
@@ -26,12 +61,6 @@ export default function Desk() {
       .catch(() => setPending(0));
   }, []);
   useEffect(refreshPending, [refreshPending]);
-
-  const notify = useCallback((message: string) => {
-    setToast(message);
-    window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
-  }, []);
 
   useEffect(() => {
     fetchLeads()
@@ -62,9 +91,7 @@ export default function Desk() {
 
   const counts = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const g of GROUPS) {
-      out[g.key] = leads.filter((l) => g.statuses.includes(l.status)).length;
-    }
+    for (const g of GROUPS) out[g.key] = leads.filter((l) => g.statuses.includes(l.status)).length;
     return out;
   }, [leads]);
 
@@ -72,6 +99,8 @@ export default function Desk() {
     () => Array.from(new Set(leads.map((l) => l.category).filter(Boolean) as string[])).sort(),
     [leads],
   );
+
+  const onLeadView = group !== "insights" && group !== "settings";
 
   const visible = useMemo(() => {
     const g = GROUPS.find((x) => x.key === group);
@@ -87,7 +116,7 @@ export default function Desk() {
 
   const selected = visible.find((l) => l.id === selectedId) ?? null;
 
-  // Keep a lead selected on desktop so the composer is never empty.
+  // Keep a lead selected on desktop so the editor is never empty.
   useEffect(() => {
     if (!selected && visible.length > 0) setSelectedId(visible[0].id);
     if (visible.length === 0) setSelectedId(null);
@@ -97,7 +126,7 @@ export default function Desk() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || e.metaKey || e.ctrlKey || e.altKey || !onLeadView) return;
       const idx = visible.findIndex((l) => l.id === selectedId);
       if (e.key === "j" && idx < visible.length - 1) setSelectedId(visible[idx + 1].id);
       if (e.key === "k" && idx > 0) setSelectedId(visible[idx - 1].id);
@@ -118,108 +147,159 @@ export default function Desk() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [visible, selectedId, selected, patch, notify]);
+  }, [visible, selectedId, selected, patch, notify, onLeadView]);
+
+  function applyFromChat(field: "email" | "whatsapp", text: string) {
+    if (!selected) return;
+    patch(selected.id, field === "email" ? { draft_edited: text } : { whatsapp_edited: text });
+  }
 
   return (
-    <div className="shell">
+    <div className="app">
       <header className="topbar">
-        <h1>Lead Desk</h1>
-        <p className="muted kbd-hint">j / k move, c copy, s sent, x skip</p>
+        <div className="brand">
+          <Lattice />
+          <span className="brand-name">Lead Desk</span>
+        </div>
+
+        <nav className="stages" aria-label="Lead stage">
+          {GROUPS.map((g) => (
+            <button
+              key={g.key}
+              className={`stage${group === g.key ? " is-active" : ""}`}
+              onClick={() => {
+                setGroup(g.key);
+                setShowDetail(false);
+              }}
+            >
+              {g.label}
+              <span className="stage-count">{counts[g.key] ?? 0}</span>
+            </button>
+          ))}
+          <button className={`stage${group === "all" ? " is-active" : ""}`} onClick={() => { setGroup("all"); setShowDetail(false); }}>
+            All
+            <span className="stage-count">{leads.length}</span>
+          </button>
+        </nav>
+
+        <div className="topbar-right">
+          <button className={`stage${group === "insights" ? " is-active" : ""}`} onClick={() => setGroup("insights")}>
+            Insights
+            {pending > 0 && <span className="stage-count is-attn">{pending}</span>}
+          </button>
+          <button className={`stage${group === "settings" ? " is-active" : ""}`} onClick={() => setGroup("settings")}>
+            Settings
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => setTheme(isDark ? "light" : "dark")}
+            aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+            title={isDark ? "Light theme" : "Dark theme"}
+          >
+            {isDark ? <SunIcon /> : <MoonIcon />}
+          </button>
+          <button
+            className={`icon-btn${chatOpen ? " is-on" : ""}`}
+            onClick={() => setChatOpen((o) => !o)}
+            aria-label={chatOpen ? "Hide chat" : "Ask DeepSeek"}
+            aria-pressed={chatOpen}
+            title="Ask DeepSeek"
+          >
+            <SparkIcon />
+          </button>
+        </div>
       </header>
 
-      <nav className="tabs" aria-label="Lead stage">
-        {GROUPS.map((g) => (
-          <button
-            key={g.key}
-            className={`tab${g.key === group ? " is-active" : ""}`}
-            onClick={() => setGroup(g.key)}
-          >
-            {g.label}
-            <span className="tab-count">{counts[g.key] ?? 0}</span>
-          </button>
-        ))}
-        <button className={`tab${group === "all" ? " is-active" : ""}`} onClick={() => setGroup("all")}>
-          All
-          <span className="tab-count">{leads.length}</span>
-        </button>
-        <button className={`tab tab-right${group === "insights" ? " is-active" : ""}`} onClick={() => setGroup("insights")}>
-          Insights
-          {pending > 0 && <span className="tab-count tab-alert">{pending}</span>}
-        </button>
-        <button className={`tab${group === "settings" ? " is-active" : ""}`} onClick={() => setGroup("settings")}>
-          Settings
-        </button>
-      </nav>
-
-      {group === "insights" && (
-        <main className="page">
-          <Insights notify={notify} onChanged={refreshPending} />
-        </main>
-      )}
-      {group === "settings" && (
-        <main className="page">
-          <Settings notify={notify} />
-        </main>
-      )}
-
-      <div className={`layout${showDetail ? " show-detail" : ""}`} hidden={group === "insights" || group === "settings"}>
-        <aside className="pane pane-list">
-          <div className="filters">
-            <input
-              type="search"
-              placeholder="Search name, area, category"
-              aria-label="Search leads"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category">
-              <option value="">All categories</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <label className="check">
-              <input type="checkbox" checked={onlyEmail} onChange={(e) => setOnlyEmail(e.target.checked)} />
-              Has email
-            </label>
-          </div>
-
-          {loading ? (
-            <p className="muted pad">Loading leads</p>
-          ) : error ? (
-            <p className="notice notice-error pad" role="alert">
-              {error}
-            </p>
-          ) : (
-            <LeadList
-              leads={visible}
-              selectedId={selectedId}
-              onSelect={(id) => {
-                setSelectedId(id);
-                setShowDetail(true);
-              }}
-            />
+      <div className="body">
+        <div className="main">
+          {group === "insights" && (
+            <main className="page">
+              <div className="page-inner">
+                <Insights notify={notify} onChanged={refreshPending} />
+              </div>
+            </main>
           )}
-        </aside>
+          {group === "settings" && (
+            <main className="page">
+              <div className="page-inner">
+                <Settings notify={notify} />
+              </div>
+            </main>
+          )}
 
-        <main className="pane pane-detail">
-          {selected ? (
-            <LeadDetail
-              key={selected.id}
-              lead={selected}
-              onPatch={patch}
-              onBack={() => setShowDetail(false)}
-              notify={notify}
-            />
-          ) : (
-            <div className="empty">
-              <p>Nothing selected.</p>
-              <p className="muted">Pick a lead from the list to review its draft.</p>
+          {onLeadView && (
+            <div className={`workspace${showDetail ? " show-detail" : ""}`}>
+              <aside className="pane pane-list">
+                <div className="filters">
+                  <input
+                    type="search"
+                    placeholder="Search name, area or category"
+                    aria-label="Search leads"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  <div className="filters-row">
+                    <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category">
+                      <option value="">All categories</option>
+                      {categories.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="check">
+                      <input type="checkbox" checked={onlyEmail} onChange={(e) => setOnlyEmail(e.target.checked)} />
+                      Has email
+                    </label>
+                  </div>
+                </div>
+
+                <div className="list-scroll">
+                  {loading ? (
+                    <>
+                      <div className="skeleton" />
+                      <div className="skeleton" />
+                      <div className="skeleton" />
+                    </>
+                  ) : error ? (
+                    <p className="notice notice-error pad" role="alert">
+                      {error}
+                    </p>
+                  ) : (
+                    <LeadList
+                      leads={visible}
+                      selectedId={selectedId}
+                      showStatus={group === "all"}
+                      onSelect={(id) => {
+                        setSelectedId(id);
+                        setShowDetail(true);
+                      }}
+                    />
+                  )}
+                </div>
+                <p className="kbd-hint">
+                  <kbd>j</kbd> <kbd>k</kbd> move, <kbd>c</kbd> copy, <kbd>s</kbd> sent, <kbd>x</kbd> skip
+                </p>
+              </aside>
+
+              <main className="pane pane-detail">
+                {selected ? (
+                  <LeadDetail key={selected.id} lead={selected} onPatch={patch} onBack={() => setShowDetail(false)} notify={notify} />
+                ) : (
+                  <div className="empty">
+                    <Lattice size={54} />
+                    <strong>No lead selected</strong>
+                    <p>Pick one from the list to read its draft.</p>
+                  </div>
+                )}
+              </main>
             </div>
           )}
-        </main>
+        </div>
+
+        {chatOpen && (
+          <Chat lead={onLeadView ? selected : null} onClose={() => setChatOpen(false)} onApply={applyFromChat} notify={notify} />
+        )}
       </div>
 
       <div className={`toast${toast ? " is-on" : ""}`} role="status" aria-live="polite">

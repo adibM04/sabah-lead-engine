@@ -57,3 +57,33 @@ export async function fetchSettings(): Promise<SettingsState> {
 }
 export const saveSecret = (name: string, value: string) => send(`/api/settings/${name}`, "PUT", { value });
 export const removeSecret = (name: string) => send(`/api/settings/${name}`, "DELETE");
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** Streams a reply from /api/chat, calling onText with each new piece as it arrives. */
+export async function streamChat(
+  messages: ChatMessage[],
+  leadId: string | null,
+  onText: (piece: string) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await check(
+    await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, lead_id: leadId }),
+      signal,
+    }),
+  );
+  if (!res.body) throw new Error("The reply came back empty");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onText(decoder.decode(value, { stream: true }));
+  }
+}

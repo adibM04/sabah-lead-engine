@@ -6,6 +6,9 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string; // e.g. yourteam.cloudflareaccess.com
   ACCESS_AUD?: string; // Access application AUD tag
   DEV_BYPASS?: string; // "1" for local wrangler dev only
+  DEEPSEEK_API_KEY?: string; // optional: overrides the key saved in Settings
+  DEEPSEEK_MODEL?: string; // defaults to deepseek-v4-pro
+  DEEPSEEK_BASE_URL?: string; // defaults to https://api.deepseek.com
   SETTINGS_KEY?: string; // master secret that encrypts API keys stored from the dashboard
   DASH_PASSWORD?: string; // shared password, checked via HTTP Basic auth (any username)
 }

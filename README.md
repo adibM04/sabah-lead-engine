@@ -95,3 +95,7 @@ Drafts follow the active row in the `playbook` table (v1 is seeded from `pipelin
 python lead_engine.py --backfill --max 40   # draft for leads that have none (e.g. the seeded list)
 ```
 Set `DEEPSEEK_API_KEY` in `pipeline/.env`. Model defaults to `deepseek-v4-pro` (`DEEPSEEK_MODEL`).
+
+## Chat panel
+
+The sparkle button in the top bar opens a chat with DeepSeek on the right. It sees the selected lead (details, drafts, notes) and the active playbook, streams its replies, and can put a reply straight into the email or WhatsApp editor ("Use as email" / "Use as WhatsApp"). It cannot send anything. It uses the DeepSeek key saved under Settings, or a `DEEPSEEK_API_KEY` Pages variable if you set one. `DEEPSEEK_MODEL` (default `deepseek-v4-pro`) can also be set as a Pages variable.
