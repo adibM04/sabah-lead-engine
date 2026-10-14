@@ -1,0 +1,13 @@
+name = "lead-desk"
+compatibility_date = "2026-10-01"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sabah-leads"
+database_id = "REPLACE_WITH_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Set these as Pages environment variables (Settings > Variables), not here:
+#   ACCESS_TEAM_DOMAIN  e.g. yourteam.cloudflareaccess.com
+#   ACCESS_AUD          the Application Audience (AUD) tag of your Access app

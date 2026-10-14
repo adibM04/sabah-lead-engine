@@ -1,30 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { supabase } from "./lib/supabase";
+import { fetchLeads, updateLead } from "./api";
 import { GROUPS, type Lead } from "./types";
-import Login from "./components/Login";
 import LeadList from "./components/LeadList";
 import LeadDetail from "./components/LeadDetail";
 
-export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setReady(true);
-    });
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => data.subscription.unsubscribe();
-  }, []);
-
-  if (!ready) return null;
-  if (!session) return <Login />;
-  return <Desk />;
-}
-
-function Desk() {
+export default function Desk() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,15 +24,10 @@ function Desk() {
   }, []);
 
   useEffect(() => {
-    supabase
-      .from("leads")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .then(({ data, error }) => {
-        if (error) setError(error.message);
-        else setLeads((data ?? []) as Lead[]);
-        setLoading(false);
-      });
+    fetchLeads()
+      .then(setLeads)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
   }, []);
 
   const patch = useCallback(
@@ -65,9 +40,10 @@ function Desk() {
           return { ...l, ...changes };
         }),
       );
-      const { error } = await supabase.from("leads").update(changes).eq("id", id);
-      if (error) {
-        notify(`Could not save: ${error.message}`);
+      try {
+        await updateLead(id, changes);
+      } catch (e) {
+        notify(`Could not save: ${(e as Error).message}`);
         if (previous) setLeads((all) => all.map((l) => (l.id === id ? previous! : l)));
       }
     },
@@ -139,9 +115,9 @@ function Desk() {
       <header className="topbar">
         <h1>Lead Desk</h1>
         <p className="muted kbd-hint">j / k move, c copy, s sent, x skip</p>
-        <button className="btn btn-quiet" onClick={() => supabase.auth.signOut()}>
+        <a className="btn btn-quiet" href="/cdn-cgi/access/logout">
           Sign out
-        </button>
+        </a>
       </header>
 
       <nav className="tabs" aria-label="Lead stage">

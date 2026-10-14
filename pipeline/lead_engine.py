@@ -1,14 +1,14 @@
 """Sabah Lead Engine.
 
 Scrapes Google Maps (Apify), audits each business's web presence,
-drafts a personalised cold email with Gemini, and upserts everything into
-Supabase for review in the dashboard. Sending stays manual (Zoho).
+drafts a personalised cold email with Gemini, and saves everything into
+Cloudflare D1 for review in the dashboard. Sending stays manual (Zoho).
 
 Usage:
     python lead_engine.py                       # uses queries.json
     python lead_engine.py --max 15              # leads per query
     python lead_engine.py --query "dental clinic in Sandakan"
-    python lead_engine.py --dry-run             # no writes to Supabase
+    python lead_engine.py --dry-run             # no database reads or writes
 """
 from __future__ import annotations
 
@@ -26,14 +26,14 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
-from supabase import create_client
 
 load_dotenv(Path(__file__).with_name(".env"))
 
 APIFY_TOKEN = os.environ["APIFY_TOKEN"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]  # service_role: server-side only
+CF_ACCOUNT_ID = os.environ["CF_ACCOUNT_ID"]
+CF_D1_DATABASE_ID = os.environ["CF_D1_DATABASE_ID"]
+CF_API_TOKEN = os.environ["CF_API_TOKEN"]  # needs D1 Edit permission only
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 SENDER_NAME = os.getenv("SENDER_NAME", "Adib")
 STUDIO_NAME = os.getenv("STUDIO_NAME", "Smart Native Maker")
@@ -48,7 +48,25 @@ EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 apify = ApifyClient(APIFY_TOKEN)
 gemini = genai.Client(api_key=GEMINI_API_KEY)
-db = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+D1_URL = (
+    f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}"
+    f"/d1/database/{CF_D1_DATABASE_ID}/query"
+)
+
+
+def d1(sql: str, params: list | None = None) -> list[dict]:
+    """Run one SQL statement against D1 and return the result rows."""
+    resp = requests.post(
+        D1_URL,
+        headers={"Authorization": f"Bearer {CF_API_TOKEN}"},
+        json={"sql": sql, "params": params or []},
+        timeout=30,
+    )
+    body = resp.json()
+    if not resp.ok or not body.get("success"):
+        raise RuntimeError(f"D1 error {resp.status_code}: {body.get('errors')}")
+    return body["result"][0].get("results", [])
 
 
 class Outreach(BaseModel):
@@ -152,14 +170,19 @@ INSTRUCTIONS
 
 # -------------------------------------------------------------- pipeline
 def existing_place_ids() -> set[str]:
-    ids: set[str] = set()
-    start, page = 0, 1000
-    while True:
-        rows = db.table("leads").select("place_id").range(start, start + page - 1).execute().data
-        ids.update(r["place_id"] for r in rows)
-        if len(rows) < page:
-            return ids
-        start += page
+    return {r["place_id"] for r in d1("SELECT place_id FROM leads")}
+
+
+def save_lead(lead: dict) -> None:
+    row = dict(lead)
+    row["all_emails"] = json.dumps(row.get("all_emails") or [])
+    row["has_whatsapp_link"] = int(bool(row.get("has_whatsapp_link")))
+    row["uses_linktree"] = int(bool(row.get("uses_linktree")))
+    cols = list(row)
+    d1(
+        f"INSERT OR IGNORE INTO leads ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+        [row[c] for c in cols],
+    )
 
 
 def to_lead(place: dict, query_hint: str | None) -> dict:
@@ -223,7 +246,7 @@ def run(queries: list[str], max_results: int, dry_run: bool) -> None:
         if dry_run:
             print(json.dumps(lead, indent=2, ensure_ascii=False))
         else:
-            db.table("leads").upsert(lead, on_conflict="place_id", ignore_duplicates=True).execute()
+            save_lead(lead)
         saved += 1
         time.sleep(1)
 
@@ -234,7 +257,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--query", action="append", help="search query (repeatable); overrides queries.json")
     p.add_argument("--max", type=int, default=10, help="max places per query")
-    p.add_argument("--dry-run", action="store_true", help="print leads, do not write to Supabase")
+    p.add_argument("--dry-run", action="store_true", help="print leads, do not touch the database")
     args = p.parse_args()
 
     queries = args.query or json.loads(QUERIES_FILE.read_text())
