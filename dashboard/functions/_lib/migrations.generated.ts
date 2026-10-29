@@ -53,5 +53,12 @@ export const MIGRATIONS: { name: string; statements: string[] }[] = [
    "UPDATE leads SET score = (CASE WHEN website IS NULL OR website = '' THEN 40 WHEN uses_linktree = 1 OR website LIKE '%facebook.com%' OR website LIKE '%instagram.com%' OR website LIKE '%linktr.ee%' OR website LIKE '%carrd.co%' OR website LIKE '%beacons.ai%' THEN 30 ELSE 10 END) + (MIN(COALESCE(reviews_count, 0), 500) * 20 / 500) + (CASE WHEN COALESCE(rating, 0) >= 4.5 THEN 10 WHEN COALESCE(rating, 0) >= 4.0 THEN 5 ELSE 0 END) + (CASE WHEN email IS NOT NULL AND email != '' THEN 15 WHEN phone IS NOT NULL AND phone != '' THEN 5 ELSE 0 END)",
    "CREATE INDEX leads_score_idx ON leads (score DESC)"
   ]
+ },
+ {
+  "name": "0006_website_report.sql",
+  "statements": [
+   "ALTER TABLE leads ADD COLUMN website_report TEXT",
+   "ALTER TABLE leads ADD COLUMN website_report_at TEXT"
+  ]
  }
 ];

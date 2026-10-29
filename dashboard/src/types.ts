@@ -46,6 +46,8 @@ export interface Lead {
   mockup_status: "requested" | "ready" | "failed" | null;
   mockup_at: string | null;
   has_mockup: boolean;
+  website_report: string | null;
+  website_report_at: string | null;
   status: LeadStatus;
   notes: string | null;
   sent_at: string | null;

@@ -97,9 +97,9 @@ export async function fetchStats(): Promise<Stats> {
   return (await (await check(await fetch("/api/stats", { cache: "no-store" }))).json()) as Stats;
 }
 
-export async function fetchWebsiteReport(leadId: string): Promise<{ report: string }> {
+export async function fetchWebsiteReport(leadId: string): Promise<{ report: string; website_report_at: string }> {
   const res = await check(await fetch(`/api/website-report/${encodeURIComponent(leadId)}`, { method: "POST" }));
-  return (await res.json()) as { report: string };
+  return (await res.json()) as { report: string; website_report_at: string };
 }
 
 export async function analyseReply(leadId: string, reply: string): Promise<ReplyAnalysis> {

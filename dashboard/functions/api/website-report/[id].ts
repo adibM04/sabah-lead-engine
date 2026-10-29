@@ -32,10 +32,11 @@ async function readableText(url: string): Promise<string> {
 }
 
 // Reads a lead's current website live and asks DeepSeek for a short report: what they have,
-// what's missing, and what to propose. Nothing is stored; read on demand.
+// what's missing, and what to propose. Cached on the lead so it survives a refresh; re-read on demand.
 export const onRequestPost: PagesFunction<Env, "id"> = async ({ env, params }) => {
+  const id = String(params.id);
   const lead = await env.DB.prepare("SELECT business_name, category, website FROM leads WHERE id = ?")
-    .bind(String(params.id))
+    .bind(id)
     .first<{ business_name: string; category: string | null; website: string | null }>();
   if (!lead) return Response.json({ error: "Lead not found" }, { status: 404 });
   if (!lead.website) return Response.json({ error: "This lead has no website" }, { status: 400 });
@@ -84,5 +85,8 @@ export const onRequestPost: PagesFunction<Env, "id"> = async ({ env, params }) =
   const report = data.choices?.[0]?.message?.content?.trim();
   if (!report) return Response.json({ error: "The model sent nothing back. Try again." }, { status: 502 });
 
-  return Response.json({ report });
+  const at = new Date().toISOString();
+  await env.DB.prepare("UPDATE leads SET website_report = ?, website_report_at = ? WHERE id = ?").bind(report, at, id).run();
+
+  return Response.json({ report, website_report_at: at });
 };
