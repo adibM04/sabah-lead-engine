@@ -5,7 +5,7 @@ import LeadList from "./components/LeadList";
 import LeadDetail from "./components/LeadDetail";
 import Insights from "./components/Insights";
 import Settings from "./components/Settings";
-import Chat from "./components/Chat";
+import Chat, { type ChatThreads } from "./components/Chat";
 import Scans from "./components/Scans";
 import { leadScore } from "./score";
 import { Lattice, MoonIcon, SparkIcon, SunIcon } from "./components/icons";
@@ -37,6 +37,7 @@ export default function Desk() {
   const [pending, setPending] = useState(0);
   const [chatOpen, setChatOpen] = useState(() => window.innerWidth >= 1280);
   const [chatPrefill, setChatPrefill] = useState<string | null>(null);
+  const [chatThreads, setChatThreads] = useState<ChatThreads>({});
   const [theme, setTheme] = useState<Theme>(readTheme);
 
   useEffect(() => {
@@ -330,6 +331,8 @@ export default function Desk() {
             notify={notify}
             prefill={chatPrefill}
             onPrefillUsed={() => setChatPrefill(null)}
+            threads={chatThreads}
+            setThreads={setChatThreads}
           />
         )}
       </div>

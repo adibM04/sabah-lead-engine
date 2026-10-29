@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { streamChat, type ChatMessage } from "../api";
 import type { Lead } from "../types";
 import { CloseIcon, CopyIcon, SendIcon, SparkIcon, StopIcon } from "./icons";
 
-interface Msg extends ChatMessage {
+export interface Msg extends ChatMessage {
   error?: boolean;
 }
+
+export type ChatThreads = Record<string, Msg[]>;
 
 interface Props {
   lead: Lead | null;
@@ -14,6 +16,8 @@ interface Props {
   notify: (m: string) => void;
   prefill?: string | null;
   onPrefillUsed?: () => void;
+  threads: ChatThreads;
+  setThreads: Dispatch<SetStateAction<ChatThreads>>;
 }
 
 interface Prompt {
@@ -36,9 +40,8 @@ const GENERAL_PROMPTS: Prompt[] = [
   { label: "Intro after meeting in person", text: "Write a short message to send after meeting a business owner in person and offering to show them a mock-up." },
 ];
 
-export default function Chat({ lead, onClose, onApply, notify, prefill, onPrefillUsed }: Props) {
+export default function Chat({ lead, onClose, onApply, notify, prefill, onPrefillUsed, threads, setThreads }: Props) {
   const key = lead?.id ?? "general";
-  const [threads, setThreads] = useState<Record<string, Msg[]>>({});
   const [input, setInput] = useState("");
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [shareLead, setShareLead] = useState(true);
