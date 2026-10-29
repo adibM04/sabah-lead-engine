@@ -1,8 +1,38 @@
 import type { Env } from "../../_lib/access";
 import { deepseekKey } from "../../_lib/secrets";
 
-// Reads a lead's current website live (via a readable-text proxy) and asks DeepSeek for a short
-// report: what they have, what's missing, and what to propose. Nothing is stored; read on demand.
+const UA = { "User-Agent": "Mozilla/5.0" };
+
+// Jina's reader gives clean article text; raw HTML (tags stripped) is the fallback when
+// the reader is unavailable or rate-limited.
+async function readableText(url: string): Promise<string> {
+  try {
+    const r = await fetch(`https://r.jina.ai/${url}`, { headers: UA, signal: AbortSignal.timeout(12000) });
+    if (r.ok) {
+      const t = (await r.text()).trim();
+      if (t) return t.slice(0, 6000);
+    }
+  } catch {
+    // fall through to raw HTML
+  }
+  try {
+    const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(12000) });
+    if (r.ok) {
+      const text = (await r.text())
+        .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (text) return text.slice(0, 6000);
+    }
+  } catch {
+    // both failed
+  }
+  return "";
+}
+
+// Reads a lead's current website live and asks DeepSeek for a short report: what they have,
+// what's missing, and what to propose. Nothing is stored; read on demand.
 export const onRequestPost: PagesFunction<Env, "id"> = async ({ env, params }) => {
   const lead = await env.DB.prepare("SELECT business_name, category, website FROM leads WHERE id = ?")
     .bind(String(params.id))
@@ -13,13 +43,7 @@ export const onRequestPost: PagesFunction<Env, "id"> = async ({ env, params }) =
   const key = await deepseekKey(env);
   if (!key) return Response.json({ error: "No DeepSeek key found. Add it under Settings." }, { status: 503 });
 
-  let pageText = "";
-  try {
-    const r = await fetch(`https://r.jina.ai/${lead.website}`, { headers: { "User-Agent": "Mozilla/5.0" } });
-    if (r.ok) pageText = (await r.text()).slice(0, 6000).trim();
-  } catch {
-    // fall through, reported below
-  }
+  const pageText = await readableText(lead.website);
   if (!pageText) {
     return Response.json({ error: "Could not read their website. It may block automated requests." }, { status: 502 });
   }
