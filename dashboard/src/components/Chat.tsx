@@ -12,6 +12,8 @@ interface Props {
   onClose: () => void;
   onApply: (field: "email" | "whatsapp", text: string) => void;
   notify: (m: string) => void;
+  prefill?: string | null;
+  onPrefillUsed?: () => void;
 }
 
 interface Prompt {
@@ -34,7 +36,7 @@ const GENERAL_PROMPTS: Prompt[] = [
   { label: "Intro after meeting in person", text: "Write a short message to send after meeting a business owner in person and offering to show them a mock-up." },
 ];
 
-export default function Chat({ lead, onClose, onApply, notify }: Props) {
+export default function Chat({ lead, onClose, onApply, notify, prefill, onPrefillUsed }: Props) {
   const key = lead?.id ?? "general";
   const [threads, setThreads] = useState<Record<string, Msg[]>>({});
   const [input, setInput] = useState("");
@@ -57,6 +59,13 @@ export default function Chat({ lead, onClose, onApply, notify }: Props) {
   }, [msgs, key]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  useEffect(() => {
+    if (!prefill) return;
+    setInput(prefill);
+    inputRef.current?.focus();
+    onPrefillUsed?.();
+  }, [prefill, onPrefillUsed]);
 
   function update(k: string, fn: (m: Msg[]) => Msg[]) {
     setThreads((t) => ({ ...t, [k]: fn(t[k] ?? []) }));

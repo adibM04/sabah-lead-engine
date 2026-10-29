@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { analyseReply } from "../api";
+import { analyseReply, fetchWebsiteReport } from "../api";
 import { leadScore, scoreSummary } from "../score";
 import { OUTCOME_REASONS, STATUS_LABEL, type Lead, type LeadChanges, type LeadStatus, type ReplyAnalysis } from "../types";
 import { AlertIcon, BackIcon, ChatIcon, CopyIcon, MailIcon, RefreshIcon, SendIcon, SparkIcon } from "./icons";
@@ -11,9 +11,10 @@ interface Props {
   onPatch: (id: string, changes: LeadChanges) => void;
   onBack: () => void;
   notify: (message: string) => void;
+  onAskChat: (text: string) => void;
 }
 
-type Tab = "email" | "whatsapp" | "followup" | "mockup";
+type Tab = "email" | "whatsapp" | "followup" | "mockup" | "report";
 
 const STATUS_OPTIONS = Object.keys(STATUS_LABEL) as LeadStatus[];
 
@@ -37,7 +38,7 @@ function parseFlags(raw: string | null): string[] {
   }
 }
 
-export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
+export default function LeadDetail({ lead, onPatch, onBack, notify, onAskChat }: Props) {
   const emailOriginal = lead.email_draft ?? "";
   const waOriginal = lead.whatsapp_draft ?? "";
   const [body, setBody] = useState(lead.draft_edited ?? emailOriginal);
@@ -47,6 +48,19 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
   const [analysis, setAnalysis] = useState<ReplyAnalysis | null>(null);
   const [reading, setReading] = useState(false);
   const [tab, setTab] = useState<Tab>(lead.email_draft || !lead.whatsapp_draft ? "email" : "whatsapp");
+  const [report, setReport] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+
+  async function readWebsite() {
+    setReportLoading(true);
+    try {
+      setReport((await fetchWebsiteReport(lead.id)).report);
+    } catch (e) {
+      notify((e as Error).message);
+    } finally {
+      setReportLoading(false);
+    }
+  }
 
   // Pick up changes made elsewhere (for example "Use as email" in the chat panel).
   useEffect(() => setBody(lead.draft_edited ?? emailOriginal), [lead.draft_edited, emailOriginal]);
@@ -235,6 +249,11 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
                 <SparkIcon size={16} /> Mock-up {lead.has_mockup && lead.mockup_status === "ready" && <span className="dot" title="Ready" />}
               </button>
             )}
+            {canMockup && (
+              <button role="tab" aria-selected={tab === "report"} className={`paper-tab${tab === "report" ? " is-active" : ""}`} onClick={() => setTab("report")}>
+                <SparkIcon size={16} /> Website report {report && <span className="dot" title="Ready" />}
+              </button>
+            )}
             <span className="paper-spacer" />
             {lead.status === "new" && (
               <button className="btn btn-quiet btn-small" onClick={() => onPatch(lead.id, { status: "approved" })}>
@@ -373,6 +392,17 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
                 <p className="paper-empty">
                   No mock-up yet. DeepSeek can build a one-page concept from their current website. It takes a few minutes and uses a little API credit.
                 </p>
+              )}
+            </div>
+          )}
+          {tab === "report" && canMockup && (
+            <div role="tabpanel" className="mockup-panel">
+              {reportLoading ? (
+                <p className="paper-empty">Reading their website and writing a report.</p>
+              ) : report ? (
+                <p className="pad-text">{report}</p>
+              ) : (
+                <p className="paper-empty">DeepSeek can read their current website and summarise what's there, what's missing, and what to propose.</p>
               )}
             </div>
           )}
@@ -528,6 +558,30 @@ export default function LeadDetail({ lead, onPatch, onBack, notify }: Props) {
               >
                 <RefreshIcon size={16} /> {mockupWaiting ? "Queued" : lead.has_mockup ? "Rebuild mock-up" : "Build a mock-up"}
               </button>
+            </>
+          )}
+          {tab === "report" && (
+            <>
+              <button className={report ? "btn" : "btn btn-primary"} disabled={reportLoading} onClick={readWebsite}>
+                <RefreshIcon size={16} /> {reportLoading ? "Reading" : report ? "Re-read website" : "Read their website"}
+              </button>
+              {report && (
+                <>
+                  <button className="btn" onClick={() => copy(report, "Report")}>
+                    <CopyIcon size={16} /> Copy
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() =>
+                      onAskChat(
+                        `Here's a report on ${lead.business_name}'s current website:\n\n${report}\n\nWrite a cold outreach email proposing the fix, grounded only in this and what you already know about them.`,
+                      )
+                    }
+                  >
+                    <MailIcon size={16} /> Draft email from this
+                  </button>
+                </>
+              )}
             </>
           )}
           {tab === "followup" && (

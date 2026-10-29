@@ -36,6 +36,7 @@ export default function Desk() {
   const toastTimer = useRef<number | undefined>(undefined);
   const [pending, setPending] = useState(0);
   const [chatOpen, setChatOpen] = useState(() => window.innerWidth >= 1280);
+  const [chatPrefill, setChatPrefill] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(readTheme);
 
   useEffect(() => {
@@ -157,6 +158,11 @@ export default function Desk() {
   function applyFromChat(field: "email" | "whatsapp", text: string) {
     if (!selected) return;
     patch(selected.id, field === "email" ? { draft_edited: text } : { whatsapp_edited: text });
+  }
+
+  function askChat(text: string) {
+    setChatOpen(true);
+    setChatPrefill(text);
   }
 
   return (
@@ -303,7 +309,7 @@ export default function Desk() {
 
               <main className="pane pane-detail">
                 {selected ? (
-                  <LeadDetail key={selected.id} lead={selected} onPatch={patch} onBack={() => setShowDetail(false)} notify={notify} />
+                  <LeadDetail key={selected.id} lead={selected} onPatch={patch} onBack={() => setShowDetail(false)} notify={notify} onAskChat={askChat} />
                 ) : (
                   <div className="empty">
                     <Lattice size={54} />
@@ -317,7 +323,14 @@ export default function Desk() {
         </div>
 
         {chatOpen && (
-          <Chat lead={onLeadView ? selected : null} onClose={() => setChatOpen(false)} onApply={applyFromChat} notify={notify} />
+          <Chat
+            lead={onLeadView ? selected : null}
+            onClose={() => setChatOpen(false)}
+            onApply={applyFromChat}
+            notify={notify}
+            prefill={chatPrefill}
+            onPrefillUsed={() => setChatPrefill(null)}
+          />
         )}
       </div>
 
