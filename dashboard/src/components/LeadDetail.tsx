@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { analyseReply, fetchWebsiteReport } from "../api";
 import { leadScore, scoreSummary } from "../score";
 import { OUTCOME_REASONS, STATUS_LABEL, type Lead, type LeadChanges, type LeadStatus, type ReplyAnalysis } from "../types";
@@ -6,12 +6,16 @@ import { AlertIcon, BackIcon, ChatIcon, CopyIcon, MailIcon, RefreshIcon, SendIco
 import StatusChip from "./StatusChip";
 import { PITCH_LABEL } from "./pitch";
 
+export type WebsiteReports = Record<string, string>;
+
 interface Props {
   lead: Lead;
   onPatch: (id: string, changes: LeadChanges) => void;
   onBack: () => void;
   notify: (message: string) => void;
   onAskChat: (text: string) => void;
+  websiteReports: WebsiteReports;
+  setWebsiteReports: Dispatch<SetStateAction<WebsiteReports>>;
 }
 
 type Tab = "email" | "whatsapp" | "followup" | "mockup" | "report";
@@ -38,7 +42,7 @@ function parseFlags(raw: string | null): string[] {
   }
 }
 
-export default function LeadDetail({ lead, onPatch, onBack, notify, onAskChat }: Props) {
+export default function LeadDetail({ lead, onPatch, onBack, notify, onAskChat, websiteReports, setWebsiteReports }: Props) {
   const emailOriginal = lead.email_draft ?? "";
   const waOriginal = lead.whatsapp_draft ?? "";
   const [body, setBody] = useState(lead.draft_edited ?? emailOriginal);
@@ -48,13 +52,14 @@ export default function LeadDetail({ lead, onPatch, onBack, notify, onAskChat }:
   const [analysis, setAnalysis] = useState<ReplyAnalysis | null>(null);
   const [reading, setReading] = useState(false);
   const [tab, setTab] = useState<Tab>(lead.email_draft || !lead.whatsapp_draft ? "email" : "whatsapp");
-  const [report, setReport] = useState<string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const report = websiteReports[lead.id] ?? null;
 
   async function readWebsite() {
     setReportLoading(true);
     try {
-      setReport((await fetchWebsiteReport(lead.id)).report);
+      const { report: r } = await fetchWebsiteReport(lead.id);
+      setWebsiteReports((all) => ({ ...all, [lead.id]: r }));
     } catch (e) {
       notify((e as Error).message);
     } finally {

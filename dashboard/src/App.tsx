@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchLeads, fetchPlaybook, fetchQueries, updateLead } from "./api";
 import { GROUPS, type Lead, type LeadChanges } from "./types";
 import LeadList from "./components/LeadList";
-import LeadDetail from "./components/LeadDetail";
+import LeadDetail, { type WebsiteReports } from "./components/LeadDetail";
 import Insights from "./components/Insights";
 import Settings from "./components/Settings";
 import Chat, { type ChatThreads } from "./components/Chat";
@@ -38,6 +38,7 @@ export default function Desk() {
   const [chatOpen, setChatOpen] = useState(() => window.innerWidth >= 1280);
   const [chatPrefill, setChatPrefill] = useState<string | null>(null);
   const [chatThreads, setChatThreads] = useState<ChatThreads>({});
+  const [websiteReports, setWebsiteReports] = useState<WebsiteReports>({});
   const [theme, setTheme] = useState<Theme>(readTheme);
 
   useEffect(() => {
@@ -310,7 +311,16 @@ export default function Desk() {
 
               <main className="pane pane-detail">
                 {selected ? (
-                  <LeadDetail key={selected.id} lead={selected} onPatch={patch} onBack={() => setShowDetail(false)} notify={notify} onAskChat={askChat} />
+                  <LeadDetail
+                    key={selected.id}
+                    lead={selected}
+                    onPatch={patch}
+                    onBack={() => setShowDetail(false)}
+                    notify={notify}
+                    onAskChat={askChat}
+                    websiteReports={websiteReports}
+                    setWebsiteReports={setWebsiteReports}
+                  />
                 ) : (
                   <div className="empty">
                     <Lattice size={54} />
