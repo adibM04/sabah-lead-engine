@@ -91,7 +91,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     body: JSON.stringify({
       model: env.DEEPSEEK_MODEL || "deepseek-v4-pro",
       stream: true,
-      max_tokens: 1500,
+      max_tokens: 8000,
       messages: [{ role: "system", content: system }, ...messages],
     }),
   });
